@@ -20,6 +20,12 @@ static CanTxMsgTypeDef can_tx_msg;
 static uint8_t filter_to_cp_buffer[MAX_CAN_FILTER_NUMBER];
 static uint8_t tx_mailbox_to_buffer[3];
 
+#if CP_STATISTIC > 0
+static uint32_t tx_counter;
+static uint32_t rx_counter;
+static uint32_t err_counter;
+#endif
+
 struct hal_baudrate
 {
 	enum CpBitrate_e bitrate;
@@ -70,15 +76,15 @@ static const struct hal_baudrate hal_baudrate_timing_42mhz[] =
 
 static const struct hal_baudrate hal_baudrate_timing_48mhz[] =
 {
-{ eCP_BITRATE_10K, 300, CAN_SJW_1TQ, CAN_BS1_13TQ, CAN_BS2_2TQ }, // 10 KBit/s 87.5%
-		{ eCP_BITRATE_20K, 150, CAN_SJW_1TQ, CAN_BS1_13TQ, CAN_BS2_2TQ }, // 20 KBit/s 87.5%
-		{ eCP_BITRATE_50K, 60, CAN_SJW_1TQ, CAN_BS1_13TQ, CAN_BS2_2TQ }, // 50 KBit/s 87.5%
-		{ eCP_BITRATE_100K, 30, CAN_SJW_1TQ, CAN_BS1_13TQ, CAN_BS2_2TQ }, // 100 KBit/s 87.5%
-		{ eCP_BITRATE_125K, 24, CAN_SJW_1TQ, CAN_BS1_13TQ, CAN_BS2_2TQ }, // 125 KBit/s 87.5%
-		{ eCP_BITRATE_250K, 12, CAN_SJW_1TQ, CAN_BS1_13TQ, CAN_BS2_2TQ }, // 250 KBit/s 87.5%
-		{ eCP_BITRATE_500K, 6, CAN_SJW_1TQ, CAN_BS1_13TQ, CAN_BS2_2TQ }, // 500 KBit/s 87.5%
-		{ eCP_BITRATE_800K, 4, CAN_SJW_1TQ, CAN_BS1_12TQ, CAN_BS2_2TQ }, // 800 KBit/s 86.7 %
-		{ eCP_BITRATE_1M, 3, CAN_SJW_1TQ, CAN_BS1_13TQ, CAN_BS2_2TQ }  // 1 MBit/s 87.5%
+	{ eCP_BITRATE_10K, 300, CAN_SJW_1TQ, CAN_BS1_13TQ, CAN_BS2_2TQ }, // 10 KBit/s 87.5%
+	{ eCP_BITRATE_20K, 150, CAN_SJW_1TQ, CAN_BS1_13TQ, CAN_BS2_2TQ }, // 20 KBit/s 87.5%
+	{ eCP_BITRATE_50K, 60, CAN_SJW_1TQ, CAN_BS1_13TQ, CAN_BS2_2TQ }, // 50 KBit/s 87.5%
+	{ eCP_BITRATE_100K, 30, CAN_SJW_1TQ, CAN_BS1_13TQ, CAN_BS2_2TQ }, // 100 KBit/s 87.5%
+	{ eCP_BITRATE_125K, 24, CAN_SJW_1TQ, CAN_BS1_13TQ, CAN_BS2_2TQ }, // 125 KBit/s 87.5%
+	{ eCP_BITRATE_250K, 12, CAN_SJW_1TQ, CAN_BS1_13TQ, CAN_BS2_2TQ }, // 250 KBit/s 87.5%
+	{ eCP_BITRATE_500K, 6, CAN_SJW_1TQ, CAN_BS1_13TQ, CAN_BS2_2TQ }, // 500 KBit/s 87.5%
+	{ eCP_BITRATE_800K, 4, CAN_SJW_1TQ, CAN_BS1_12TQ, CAN_BS2_2TQ }, // 800 KBit/s 86.7 %
+	{ eCP_BITRATE_1M, 3, CAN_SJW_1TQ, CAN_BS1_13TQ, CAN_BS2_2TQ }  // 1 MBit/s 87.5%
 };
 
 //-------------------------------------------------------------------
@@ -98,6 +104,7 @@ static CpStatus_tv get_next_free_filter_number(uint8_t *filter_number);
 static HAL_StatusTypeDef can_filter_config(uint32_t ulIdentifierV, uint32_t ulAcceptMaskV, uint8_t ubFormatV, uint8_t filter_number, bool_t activate);
 static CpStatus_tv can_filter_init(uint8_t ubBufferIdxV, uint32_t ulIdentifierV, uint32_t ulAcceptMaskV, uint8_t ubFormatV);
 static CpStatus_tv can_filter_clear_all(void);
+static CpStatus_tv search_for_already_defined_filter(uint8_t ubBufferIdxV, uint8_t *filter_number);
 
 static HAL_StatusTypeDef HAL_CAN_Transmit_IT_MOD(CAN_HandleTypeDef* hcan, uint8_t ubBufferIdxV, uint8_t *used_tx_mailbox);
 
@@ -608,6 +615,9 @@ CpStatus_tv CpCoreCanMode(CpPort_ts * ptsPortV, uint8_t ubModeV)
 //----------------------------------------------------------------------------//
 CpStatus_tv CpCoreCanState(CpPort_ts * ptsPortV, CpState_ts * ptsStateV)
 {
+	uint32_t hal_error;
+	uint32_t hal_esr;
+
 //----------------------------------------------------------------
 // test CAN port
 //
@@ -618,11 +628,71 @@ CpStatus_tv CpCoreCanState(CpPort_ts * ptsPortV, CpState_ts * ptsStateV)
 	}
 #endif
 
+	// first set the state of the bus
+	ptsStateV->ubCanErrState = eCP_STATE_BUS_ACTIVE;
+
+	// so using this function is maybe not the right way because
+	// the error is only handled trough the interrupt handler so
+	// maybe it is better to read the status register by hand
+	hal_error = HAL_CAN_GetError(&hcan1);
+
+	if(hal_error & HAL_CAN_ERROR_EWG)
+	{
+		ptsStateV->ubCanErrState = eCP_STATE_BUS_WARN;
+	}
+
+	if(hal_error & HAL_CAN_ERROR_EPV)
+	{
+		ptsStateV->ubCanErrState = eCP_STATE_BUS_PASSIVE;
+	}
+
+	if(hal_error & HAL_CAN_ERROR_BOF)
+	{
+		ptsStateV->ubCanErrState = eCP_STATE_BUS_OFF;
+	}
+
+	// now set the errors first start with error none
+	ptsStateV->ubCanErrType = eCP_ERR_TYPE_NONE;
+
+	if(hal_error & HAL_CAN_ERROR_STF)
+	{
+		ptsStateV->ubCanErrType = eCP_ERR_TYPE_STUFF;
+	}
+
+	if(hal_error & HAL_CAN_ERROR_FOR)
+	{
+		ptsStateV->ubCanErrType = eCP_ERR_TYPE_FORM;
+	}
+
+	if(hal_error & HAL_CAN_ERROR_ACK)
+	{
+		ptsStateV->ubCanErrType = eCP_ERR_TYPE_ACK;
+	}
+
+	// bit recessive error
+	if(hal_error & HAL_CAN_ERROR_BD)
+	{
+		ptsStateV->ubCanErrType = eCP_ERR_TYPE_BIT0;
+	}
+
+	// bit dominant error
+	if(hal_error & HAL_CAN_ERROR_BR)
+	{
+		ptsStateV->ubCanErrType = eCP_ERR_TYPE_BIT1;
+	}
+
+	if(hal_error & HAL_CAN_ERROR_CRC)
+	{
+		ptsStateV->ubCanErrType = eCP_ERR_TYPE_CRC;
+	}
+
 //----------------------------------------------------------------
 // get current error counter
 //
-	ptsStateV->ubCanTrmErrCnt = 0;
-	ptsStateV->ubCanRcvErrCnt = 0;
+	hal_esr = (hcan1.Instance->ESR) >> 16;
+	ptsStateV->ubCanTrmErrCnt = (uint8_t) (hal_esr & 0x000000FF);
+	hal_esr = hal_esr >> 8;
+	ptsStateV->ubCanRcvErrCnt = (uint8_t) (hal_esr & 0x000000FF);
 
 	return (eCP_ERR_NONE);
 }
@@ -645,6 +715,12 @@ CpStatus_tv CpCoreDriverInit(uint8_t ubPhyIfV, CpPort_ts * ptsPortV, uint8_t ubC
 	{
 		return (eCP_ERR_CHANNEL);
 	}
+#endif
+
+#if CP_STATISTIC > 0
+	tx_counter = 0;
+	rx_counter = 0;
+	err_counter = 0;
 #endif
 
 	// release all buffers and
@@ -979,6 +1055,26 @@ static CpStatus_tv get_next_free_filter_number(uint8_t *filter_number)
 
 /**
  * @param ubBufferIdxV
+ * @param filter_number
+ * @return
+ */
+static CpStatus_tv search_for_already_defined_filter(uint8_t ubBufferIdxV, uint8_t *filter_number)
+{
+	uint8_t i;
+
+	for (i = 0; i < MAX_CAN_FILTER_NUMBER; ++i)
+	{
+		if (filter_to_cp_buffer[i] == ubBufferIdxV)
+		{
+			*filter_number = i;
+			return eCP_ERR_NONE;
+		}
+	}
+	return eCP_ERR_INIT_FAIL;
+}
+
+/**
+ * @param ubBufferIdxV
  * @param ulIdentifierV
  * @param ulAcceptMaskV
  * @param ubFormatV
@@ -990,10 +1086,18 @@ static CpStatus_tv can_filter_init(uint8_t ubBufferIdxV, uint32_t ulIdentifierV,
 	uint8_t filter_number;
 	HAL_StatusTypeDef hal_status;
 
-	status = get_next_free_filter_number(&filter_number);
+	// check if the buffer is already defined to a filter
+	status = search_for_already_defined_filter(ubBufferIdxV, &filter_number);
+	// it is not really nice but I use the status to check if a filter exists or not
+	if (eCP_ERR_INIT_FAIL == status)
+	{
+		// there is no filter assigned to this buffer so get a free one
+		status = get_next_free_filter_number(&filter_number);
+	}
+
 	if (eCP_ERR_NONE == status)
 	{
-		// save buffer idx in filter to buffer table
+		// save the buffer index on the filter to buffer table
 		filter_to_cp_buffer[filter_number] = ubBufferIdxV;
 
 		// config filter
@@ -1169,6 +1273,10 @@ void HAL_CAN_TxCpltCallback(CAN_HandleTypeDef* hcan)
 		(*pfnTrmIntHandler)(&atsCanMsgS[canpie_buffer_number - 1], canpie_buffer_number);
 	}
 
+#if CP_STATISTIC > 0
+	tx_counter++;
+#endif
+
 	__HAL_CAN_CLEAR_FLAG(hcan, clear_flag);
 
 	// Disable Transmit mailbox empty Interrupt
@@ -1178,23 +1286,64 @@ void HAL_CAN_TxCpltCallback(CAN_HandleTypeDef* hcan)
 
 void HAL_CAN_RxCpltCallback(CAN_HandleTypeDef* hcan)
 {
+	CpCanMsg_ts *pcan_msg;
 	// get filter index
 	uint8_t filter_number = hcan->pRxMsg->FMI;
 	uint8_t canpie_buffer_number;
 
 	canpie_buffer_number = filter_to_cp_buffer[filter_number];
 
+	pcan_msg = &atsCanMsgS[canpie_buffer_number - 1];
+
+	if (hcan->pRxMsg->IDE == CAN_ID_STD)
+	{
+		CpMsgSetStdId(pcan_msg, hcan->pRxMsg->StdId);
+	}
+	else
+	{
+		CpMsgSetExtId(pcan_msg, hcan->pRxMsg->ExtId);
+	}
+
+	if (hcan->pRxMsg->RTR == CAN_RTR_REMOTE)
+	{
+		CpMsgSetRemote(pcan_msg);
+	}
+	else
+	{
+		CpMsgClrRemote(pcan_msg);
+	}
+
+	CpMsgSetDlc(pcan_msg, hcan->pRxMsg->DLC);
+
+	pcan_msg->aubData[0] = hcan->pRxMsg->Data[0];
+	pcan_msg->aubData[1] = hcan->pRxMsg->Data[1];
+	pcan_msg->aubData[2] = hcan->pRxMsg->Data[2];
+	pcan_msg->aubData[3] = hcan->pRxMsg->Data[3];
+	pcan_msg->aubData[4] = hcan->pRxMsg->Data[4];
+	pcan_msg->aubData[5] = hcan->pRxMsg->Data[5];
+	pcan_msg->aubData[6] = hcan->pRxMsg->Data[6];
+	pcan_msg->aubData[7] = hcan->pRxMsg->Data[7];
+
 	if (NULL != pfnRcvIntHandler)
 	{
-		(*pfnRcvIntHandler)(&atsCanMsgS[canpie_buffer_number - 1], canpie_buffer_number);
+		(*pfnRcvIntHandler)(pcan_msg, canpie_buffer_number);
 	}
+
+#if CP_STATISTIC > 0
+	rx_counter++;
+#endif
 
 	// Enable FIFO 0 message pending Interrupt
 	__HAL_CAN_ENABLE_IT(&hcan1, CAN_IT_FMP0);
-
 }
 
+/**
+ * @todo enable error callback for error counter
+ * @param hcan
+ */
 void HAL_CAN_ErrorCallback(CAN_HandleTypeDef *hcan)
 {
-
+#if CP_STATISTIC > 0
+	err_counter++;
+#endif
 }
