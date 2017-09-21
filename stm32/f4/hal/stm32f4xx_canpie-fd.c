@@ -228,7 +228,7 @@ CpStatus_tv CpCoreBufferConfig(CpPort_ts * ptsPortV, uint8_t ubBufferIdxV, uint3
 //----------------------------------------------------------------
 // test message format and mask identifier
 //
-	switch (ubFormatV & CP_MSG_FORMAT_MASK)
+	switch (ubFormatV & CP_MASK_MSG_FORMAT)
 	{
 		case CP_MSG_FORMAT_CBFF:
 			ulIdentifierV = ulIdentifierV & CP_MASK_STD_FRAME;
@@ -1011,7 +1011,7 @@ static HAL_StatusTypeDef can_filter_config(uint32_t ulIdentifierV, uint32_t ulAc
 	filter_config.FilterMode = CAN_FILTERMODE_IDMASK;
 	filter_config.FilterScale = CAN_FILTERSCALE_32BIT;
 
-	if ((ubFormatV & CP_MSG_FORMAT_MASK) == CP_MSG_FORMAT_CBFF)
+	if ((ubFormatV & CP_MASK_MSG_FORMAT) == CP_MSG_FORMAT_CBFF)
 	{
 		filter_config.FilterIdHigh = ulIdentifierV << 5;
 		filter_config.FilterIdLow = 0x0;
@@ -1191,7 +1191,7 @@ static HAL_StatusTypeDef HAL_CAN_Transmit_IT_MOD(CAN_HandleTypeDef* hcan, uint8_
 		}
 
 		/* Set up the DLC */
-		hcan->pTxMsg->DLC &= (uint8_t) 0x0000000FU;
+		hcan->pTxMsg->DLC &= (uint8_t) 0x0000000F;
 		hcan->Instance->sTxMailBox[transmitmailbox].TDTR &= (uint32_t) 0xFFFFFFF0U;
 		hcan->Instance->sTxMailBox[transmitmailbox].TDTR |= hcan->pTxMsg->DLC;
 
@@ -1201,15 +1201,21 @@ static HAL_StatusTypeDef HAL_CAN_Transmit_IT_MOD(CAN_HandleTypeDef* hcan, uint8_
 		hcan->Instance->sTxMailBox[transmitmailbox].TDHR = (((uint32_t) hcan->pTxMsg->Data[7U] << 24U) | ((uint32_t) hcan->pTxMsg->Data[6U] << 16U) | ((uint32_t) hcan->pTxMsg->Data[5U] << 8U)
 				| ((uint32_t) hcan->pTxMsg->Data[4U]));
 
-		if (hcan->State == HAL_CAN_STATE_BUSY_RX)
+		/* Change CAN state */
+		switch (hcan->State)
 		{
-			/* Change CAN state */
-			hcan->State = HAL_CAN_STATE_BUSY_TX_RX;
-		}
-		else
-		{
-			/* Change CAN state */
-			hcan->State = HAL_CAN_STATE_BUSY_TX;
+			case (HAL_CAN_STATE_BUSY_RX0):
+				hcan->State = HAL_CAN_STATE_BUSY_TX_RX0;
+				break;
+			case (HAL_CAN_STATE_BUSY_RX1):
+				hcan->State = HAL_CAN_STATE_BUSY_TX_RX1;
+				break;
+			case (HAL_CAN_STATE_BUSY_RX0_RX1):
+				hcan->State = HAL_CAN_STATE_BUSY_TX_RX0_RX1;
+				break;
+			default: /* HAL_CAN_STATE_READY */
+				hcan->State = HAL_CAN_STATE_BUSY_TX;
+				break;
 		}
 
 		/* Set CAN error code to none */
@@ -1218,15 +1224,15 @@ static HAL_StatusTypeDef HAL_CAN_Transmit_IT_MOD(CAN_HandleTypeDef* hcan, uint8_
 		/* Process Unlocked */
 		__HAL_UNLOCK(hcan);
 
+		/* Request transmission */
+		hcan->Instance->sTxMailBox[transmitmailbox].TIR |= CAN_TI0R_TXRQ;
+
+		/* save which buffer used on this mailbox */
+		used_tx_mailbox[transmitmailbox] = ubBufferIdxV;
+
 		/* Enable Error warning, Error passive, Bus-off,
 		 Last error and Error Interrupts */
 		__HAL_CAN_ENABLE_IT(hcan, CAN_IT_EWG | CAN_IT_EPV | CAN_IT_BOF | CAN_IT_LEC | CAN_IT_ERR | CAN_IT_TME);
-
-		// save which buffer used on this mailbox
-		used_tx_mailbox[transmitmailbox] = ubBufferIdxV;
-
-		/* Request transmission */
-		hcan->Instance->sTxMailBox[transmitmailbox].TIR |= CAN_TI0R_TXRQ;
 	}
 	else
 	{
