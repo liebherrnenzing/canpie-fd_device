@@ -2,7 +2,7 @@
 #include "cp_msg.h"
 #include "canpie.h"
 
-#include "stm32f4xx_hal.h"
+#include "stm32f1xx_hal.h"
 
 // Definitions
 #define HAL_CAN_TIMEOUT_VALUE  10U
@@ -12,7 +12,7 @@
 #define BUFFER_NOT_USED	(-1)
 // external functions
 // variables of module
-extern CAN_HandleTypeDef hcan1;
+extern CAN_HandleTypeDef hcan;
 
 static CanRxMsgTypeDef can_rx_msg;
 static CanTxMsgTypeDef can_tx_msg;
@@ -26,7 +26,7 @@ static uint32_t rx_counter;
 static uint32_t err_counter;
 #endif
 
-#define HCAN1 hcan1
+#define HCAN1 hcan
 
 struct hal_baudrate
 {
@@ -742,10 +742,10 @@ CpStatus_tv CpCoreDriverInit(uint8_t ubPhyIfV, CpPort_ts * ptsPortV, uint8_t ubC
 				HCAN1.pRxMsg = &can_rx_msg;
 
 				HCAN1.Init.Mode = CAN_MODE_NORMAL;
-				HCAN1.Init.Prescaler = 8;
+				HCAN1.Init.Prescaler = 9;
 				HCAN1.Init.SJW = CAN_SJW_1TQ;
-				HCAN1.Init.BS1 = CAN_BS1_15TQ;
-				HCAN1.Init.BS2 = CAN_BS2_5TQ;
+				HCAN1.Init.BS1 = CAN_BS1_11TQ;
+				HCAN1.Init.BS2 = CAN_BS2_4TQ;
 
 				HCAN1.Init.TTCM = DISABLE;
 				HCAN1.Init.ABOM = DISABLE;
