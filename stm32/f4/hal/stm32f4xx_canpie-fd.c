@@ -14,7 +14,8 @@
 // variables of module
 extern CAN_HandleTypeDef hcan1;
 
-static CanRxMsgTypeDef can_rx_msg;
+static CanRxMsgTypeDef can_rx_msg_fifo0;
+//static CanRxMsgTypeDef can_rx_msg_fifo1;
 static CanTxMsgTypeDef can_tx_msg;
 
 static uint8_t filter_to_cp_buffer[MAX_CAN_FILTER_NUMBER];
@@ -111,7 +112,7 @@ static CpTrmHandler_Fn /*@null@*/pfnTrmHandlerS = CPP_NULL;
 static CpErrHandler_Fn /*@null@*/pfnErrHandlerS = CPP_NULL;
 
 static CpStatus_tv get_next_free_filter_number(uint8_t *filter_number);
-static HAL_StatusTypeDef can_filter_config(uint32_t ulIdentifierV, uint32_t ulAcceptMaskV, uint8_t ubFormatV, uint8_t filter_number, bool_t activate);
+static HAL_StatusTypeDef can_filter_config(uint32_t ulIdentifierV, uint32_t ulAcceptMaskV, uint8_t ubFormatV, uint8_t filter_number,  uint32_t fifo, bool_t activate);
 static CpStatus_tv can_filter_init(uint8_t ubBufferIdxV, uint32_t ulIdentifierV, uint32_t ulAcceptMaskV, uint8_t ubFormatV);
 static CpStatus_tv can_filter_clear_all(void);
 static CpStatus_tv search_for_already_defined_filter(uint8_t ubBufferIdxV, uint8_t *filter_number);
@@ -533,16 +534,16 @@ CpStatus_tv CpCoreCanMode(CpPort_ts * ptsPortV, uint8_t ubModeV)
 				//
 				case eCP_MODE_STOP:
 
-					// Disable Transmit mailbox empty Interrupt
+					// Transmit mailbox empty Interrupt
 					__HAL_CAN_DISABLE_IT(&HCAN1, CAN_IT_TME);
 
-					// Disable FIFO 0 message pending Interrupt
+					// FIFO 0 message pending Interrupt
 					__HAL_CAN_DISABLE_IT(&HCAN1, CAN_IT_FMP0);
 
-					// Disable FIFO 1 message pending Interrupt
+					// FIFO 1 message pending Interrupt
 					__HAL_CAN_DISABLE_IT(&HCAN1, CAN_IT_FMP1);
 
-					// Disable Error warning, Error passive, Bus-off, Last error code and Error Interrupts
+					// Error warning, Error passive, Bus-off, Last error code and Error Interrupts
 					__HAL_CAN_DISABLE_IT(&HCAN1, CAN_IT_EWG | CAN_IT_EPV | CAN_IT_BOF | CAN_IT_LEC | CAN_IT_ERR);
 
 					// Request initialization
@@ -555,12 +556,18 @@ CpStatus_tv CpCoreCanMode(CpPort_ts * ptsPortV, uint8_t ubModeV)
 					//
 				case eCP_MODE_START:
 
-					// Disable Transmit mailbox empty Interrupt
+					// Transmit mailbox empty Interrupt
 					__HAL_CAN_ENABLE_IT(&HCAN1, CAN_IT_TME);
-
-					// Disable FIFO 0 message pending Interrupt
+#if 1
+					(void)HAL_CAN_Receive_IT(&HCAN1, CAN_FIFO0);
+					(void)HAL_CAN_Receive_IT(&HCAN1, CAN_FIFO1);
+#else
+					// FIFO 0 message pending Interrupt
 					__HAL_CAN_ENABLE_IT(&HCAN1, CAN_IT_FMP0);
 
+					// FIFO 1 message pending Interrupt
+					__HAL_CAN_ENABLE_IT(&HCAN1, CAN_IT_FMP1);
+#endif
 					// Request initialization
 					HAL_CAN_WakeUp(&HCAN1);
 
@@ -572,11 +579,18 @@ CpStatus_tv CpCoreCanMode(CpPort_ts * ptsPortV, uint8_t ubModeV)
 				case eCP_MODE_LISTEN_ONLY:
 					HCAN1.Init.Mode = CAN_MODE_SILENT;
 
-					// Enable Transmit mailbox empty Interrupt
+					// Transmit mailbox empty Interrupt
 					__HAL_CAN_ENABLE_IT(&HCAN1, CAN_IT_TME);
-
-					// Enable FIFO 0 message pending Interrupt
+#if 1
+					(void)HAL_CAN_Receive_IT(&HCAN1, CAN_FIFO0);
+					(void)HAL_CAN_Receive_IT(&HCAN1, CAN_FIFO1);
+#else
+					// FIFO 0 message pending Interrupt
 					__HAL_CAN_ENABLE_IT(&HCAN1, CAN_IT_FMP0);
+
+					// FIFO 1 message pending Interrupt
+					__HAL_CAN_ENABLE_IT(&HCAN1, CAN_IT_FMP1);
+#endif
 					HCAN1.Init.Mode = CAN_MODE_SILENT;
 					hal_status = HAL_CAN_Init(&HCAN1);
 
@@ -739,7 +753,10 @@ CpStatus_tv CpCoreDriverInit(uint8_t ubPhyIfV, CpPort_ts * ptsPortV, uint8_t ubC
 
 				HCAN1.Instance = CAN1;
 				HCAN1.pTxMsg = &can_tx_msg;
-				HCAN1.pRxMsg = &can_rx_msg;
+				HCAN1.pRxMsg = &can_rx_msg_fifo0;
+				//HCAN1.pRx1Msg = &can_rx_msg_fifo1;
+				HCAN1.pRx1Msg = &can_rx_msg_fifo0;
+
 
 				HCAN1.Init.Mode = CAN_MODE_NORMAL;
 				HCAN1.Init.Prescaler = 8;
@@ -1032,7 +1049,7 @@ CpStatus_tv CpCoreStatistic(CpPort_ts * ptsPortV, CpStatistic_ts * ptsStatsV)
  * @param activate
  * @return
  */
-static HAL_StatusTypeDef can_filter_config(uint32_t ulIdentifierV, uint32_t ulAcceptMaskV, uint8_t ubFormatV, uint8_t filter_number, bool_t activate)
+static HAL_StatusTypeDef can_filter_config(uint32_t ulIdentifierV, uint32_t ulAcceptMaskV, uint8_t ubFormatV, uint8_t filter_number,  uint32_t fifo, bool_t activate)
 {
 	CAN_FilterConfTypeDef filter_config;
 
@@ -1056,7 +1073,7 @@ static HAL_StatusTypeDef can_filter_config(uint32_t ulIdentifierV, uint32_t ulAc
 		filter_config.FilterMaskIdLow = (0x00FF & (ulAcceptMaskV << 3)) | (1 << 2);
 	}
 
-	filter_config.FilterFIFOAssignment = 0;
+	filter_config.FilterFIFOAssignment = fifo;
 	filter_config.FilterActivation = activate;
 	filter_config.BankNumber = 14;
 
@@ -1115,6 +1132,7 @@ static CpStatus_tv can_filter_init(uint8_t ubBufferIdxV, uint32_t ulIdentifierV,
 	CpStatus_tv status;
 	uint8_t filter_number;
 	HAL_StatusTypeDef hal_status;
+	static uint32_t fifo_number = CAN_FIFO0;
 
 	// check if the buffer is already defined to a filter
 	status = search_for_already_defined_filter(ubBufferIdxV, &filter_number);
@@ -1131,7 +1149,17 @@ static CpStatus_tv can_filter_init(uint8_t ubBufferIdxV, uint32_t ulIdentifierV,
 		filter_to_cp_buffer[filter_number] = ubBufferIdxV;
 
 		// config filter
-		hal_status = can_filter_config(ulIdentifierV, ulAcceptMaskV, ubFormatV, filter_number, 1);
+		hal_status = can_filter_config(ulIdentifierV, ulAcceptMaskV, ubFormatV, filter_number, fifo_number, 1);
+
+		// try to use booth FIFO in parallel
+		if(fifo_number == CAN_FIFO0)
+		{
+			fifo_number = CAN_FIFO1;
+		}
+		else
+		{
+			fifo_number = CAN_FIFO0;
+		}
 
 		if (HAL_OK == hal_status)
 		{
@@ -1153,7 +1181,7 @@ static CpStatus_tv can_filter_clear_all(void)
 
 	for (i = 0; i < MAX_CAN_FILTER_NUMBER; ++i)
 	{
-		hal_status = can_filter_config(0, 0, 0, i, 0);
+		hal_status = can_filter_config(0, 0, 0, i, CAN_FIFO0, 0);
 
 		if (HAL_OK != hal_status)
 		{
@@ -1360,6 +1388,8 @@ void HAL_CAN_RxCpltCallback(CAN_HandleTypeDef* hcan)
 	pcan_msg->aubData[6] = hcan->pRxMsg->Data[6];
 	pcan_msg->aubData[7] = hcan->pRxMsg->Data[7];
 
+	//pcan_msg->ulMsgUser = hcan->pRxMsg->FIFONumber;
+
 	if (CPP_NULL != pfnRcvHandlerS)
 	{
 		pfnRcvHandlerS(pcan_msg, canpie_buffer_number);
@@ -1369,8 +1399,16 @@ void HAL_CAN_RxCpltCallback(CAN_HandleTypeDef* hcan)
 	rx_counter++;
 #endif
 
-	// Enable FIFO 0 message pending Interrupt
+#if 1
+	HAL_CAN_Receive_IT(hcan, hcan->pRxMsg->FIFONumber);
+#else
+	// FIFO 0 message pending Interrupt
 	__HAL_CAN_ENABLE_IT(hcan, CAN_IT_FMP0);
+	//__HAL_CAN_ENABLE_IT(hcan, CAN_IT_FOV0 | CAN_IT_FMP0);
+
+	// FIFO 1 message pending Interrupt
+	__HAL_CAN_ENABLE_IT(hcan, CAN_IT_FMP1);
+#endif
 }
 
 /**
@@ -1379,7 +1417,16 @@ void HAL_CAN_RxCpltCallback(CAN_HandleTypeDef* hcan)
  */
 void HAL_CAN_ErrorCallback(CAN_HandleTypeDef *hcan)
 {
+	static CpState_ts state;
+	/**@todo fill state */
 #if CP_STATISTIC > 0
 	err_counter++;
 #endif
+	/* Enable Error warning, Error passive, Bus-off, Last error and Error Interrupts and FIFO0, FIFO1 */
+	__HAL_CAN_ENABLE_IT(hcan, CAN_IT_EWG | CAN_IT_EPV | CAN_IT_BOF | CAN_IT_LEC | CAN_IT_ERR | CAN_IT_TME | CAN_IT_FOV0 | CAN_IT_FMP0 | CAN_IT_FOV1 | CAN_IT_FMP1);
+
+	if (CPP_NULL != pfnErrHandlerS)
+	{
+		pfnErrHandlerS(&state);
+	}
 }
