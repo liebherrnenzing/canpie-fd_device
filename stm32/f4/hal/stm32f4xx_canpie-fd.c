@@ -116,8 +116,7 @@ static HAL_StatusTypeDef can_filter_config(uint32_t ulIdentifierV, uint32_t ulAc
 static CpStatus_tv can_filter_init(uint8_t ubBufferIdxV, uint32_t ulIdentifierV, uint32_t ulAcceptMaskV, uint8_t ubFormatV);
 static CpStatus_tv can_filter_clear_all(void);
 static CpStatus_tv search_for_already_defined_filter(uint8_t ubBufferIdxV, uint8_t *filter_number);
-
-static HAL_StatusTypeDef HAL_CAN_Transmit_IT_MOD(CAN_HandleTypeDef* hcan, uint8_t ubBufferIdxV, uint8_t *used_tx_mailbox);
+static HAL_StatusTypeDef HAL_CAN_Transmit_IT_MOD(CAN_HandleTypeDef* hcan, uint32_t *used_tx_mailbox);
 
 /*----------------------------------------------------------------------------*\
 ** Function implementation                                                    **
@@ -396,6 +395,7 @@ CpStatus_tv CpCoreBufferSend(CpPort_ts * ptsPortV, uint8_t ubBufferIdxV)
 {
 	uint8_t i;
 	CpStatus_tv tvStatusT;
+	uint32_t tx_mailbox;
 
 	//----------------------------------------------------------------
 	// test parameter ptsPortV and ubBufferIdxV
@@ -436,13 +436,16 @@ CpStatus_tv CpCoreBufferSend(CpPort_ts * ptsPortV, uint8_t ubBufferIdxV)
 			HCAN1.pTxMsg->Data[i] = atsCanMsgS[ubBufferIdxV].aubData[i];
 		}
 
-		if (HAL_CAN_Transmit_IT_MOD(&HCAN1, ubBufferIdxV, &tx_mailbox_to_buffer[0]) != HAL_OK)
+		if (HAL_CAN_Transmit_IT_MOD(&HCAN1,&tx_mailbox) != HAL_OK)
 		{
 #ifdef DEBUG
 			printf("Transmission error\r\n");
 #endif
 			return eCP_ERR_TRM_FULL;
 		}
+
+		/* save which buffer was used for tx */
+		tx_mailbox_to_buffer[tx_mailbox] = ubBufferIdxV;
 	}
 	return (tvStatusT);
 }
@@ -749,6 +752,11 @@ CpStatus_tv CpCoreDriverInit(uint8_t ubPhyIfV, CpPort_ts * ptsPortV, uint8_t ubC
 				for (i = 0; i < MAX_CAN_FILTER_NUMBER; i++)
 				{
 					filter_to_cp_buffer[i] = BUFFER_NOT_USED;
+				}
+
+				for (i = 0; i < 3; i++)
+				{
+					tx_mailbox_to_buffer[3] = BUFFER_NOT_USED;
 				}
 
 				HCAN1.Instance = CAN1;
@@ -1208,7 +1216,7 @@ static CpStatus_tv can_filter_clear_all(void)
  * @param used_tx_mailbox used mailbox for transmit
  * @retval HAL status
  */
-static HAL_StatusTypeDef HAL_CAN_Transmit_IT_MOD(CAN_HandleTypeDef* hcan, uint8_t ubBufferIdxV, uint8_t *used_tx_mailbox)
+static HAL_StatusTypeDef HAL_CAN_Transmit_IT_MOD(CAN_HandleTypeDef* hcan, uint32_t *used_tx_mailbox)
 {
 	uint32_t transmitmailbox = CAN_TXSTATUS_NOMAILBOX;
 
@@ -1287,7 +1295,7 @@ static HAL_StatusTypeDef HAL_CAN_Transmit_IT_MOD(CAN_HandleTypeDef* hcan, uint8_
 		hcan->Instance->sTxMailBox[transmitmailbox].TIR |= CAN_TI0R_TXRQ;
 
 		/* save which buffer used on this mailbox */
-		used_tx_mailbox[transmitmailbox] = ubBufferIdxV;
+		*used_tx_mailbox = transmitmailbox;
 
 		/* Enable Error warning, Error passive, Bus-off,
 		 Last error and Error Interrupts */
@@ -1307,46 +1315,50 @@ static HAL_StatusTypeDef HAL_CAN_Transmit_IT_MOD(CAN_HandleTypeDef* hcan, uint8_
 
 void HAL_CAN_TxCpltCallback(CAN_HandleTypeDef* hcan)
 {
-	uint8_t canpie_buffer_number = 0;
-	uint32_t clear_flag = 0;
+	int8_t canpie_buffer_number;
 
-	if (__HAL_CAN_TRANSMIT_STATUS(hcan, CAN_TXMAILBOX_0))
+    if (__HAL_CAN_GET_FLAG(hcan, CAN_FLAG_TXOK0))
 	{
 		canpie_buffer_number = tx_mailbox_to_buffer[CAN_TXMAILBOX_0];
-		clear_flag = CAN_FLAG_RQCP0;
+
+		if ((canpie_buffer_number != BUFFER_NOT_USED) && (CPP_NULL != pfnTrmHandlerS))
+		{
+			pfnTrmHandlerS(&atsCanMsgS[canpie_buffer_number], canpie_buffer_number);
+		}
+		// clear mailbox buffer 0
+		tx_mailbox_to_buffer[CAN_TXMAILBOX_0] = BUFFER_NOT_USED;
 	}
-	// else
-	if (__HAL_CAN_TRANSMIT_STATUS(hcan, CAN_TXMAILBOX_1))
+
+    if (__HAL_CAN_GET_FLAG(hcan, CAN_FLAG_TXOK1))
 	{
 		canpie_buffer_number = tx_mailbox_to_buffer[CAN_TXMAILBOX_1];
-		clear_flag = CAN_FLAG_RQCP1;
+
+		if ((canpie_buffer_number != BUFFER_NOT_USED) && (CPP_NULL != pfnTrmHandlerS))
+		{
+			pfnTrmHandlerS(&atsCanMsgS[canpie_buffer_number], canpie_buffer_number);
+		}
+		// clear mailbox buffer 1
+		tx_mailbox_to_buffer[CAN_TXMAILBOX_1] = BUFFER_NOT_USED;
 	}
-	// else
-	if (__HAL_CAN_TRANSMIT_STATUS(hcan, CAN_TXMAILBOX_2))
+
+    if (__HAL_CAN_GET_FLAG(hcan, CAN_FLAG_TXOK2))
 	{
 		canpie_buffer_number = tx_mailbox_to_buffer[CAN_TXMAILBOX_2];
-		clear_flag = CAN_FLAG_RQCP2;
-	}
-//	else
-//	{
-//		// what should we do here
-//		// return and call error callback or ignore because that could not happen
-//	}
 
-	if (CPP_NULL != pfnTrmHandlerS)
-	{
-		pfnTrmHandlerS(&atsCanMsgS[canpie_buffer_number], canpie_buffer_number);
+		if ((canpie_buffer_number != BUFFER_NOT_USED) && (CPP_NULL != pfnTrmHandlerS))
+		{
+			pfnTrmHandlerS(&atsCanMsgS[canpie_buffer_number], canpie_buffer_number);
+		}
+		// clear mailbox buffer 2
+		tx_mailbox_to_buffer[CAN_TXMAILBOX_2] = BUFFER_NOT_USED;
 	}
 
 #if CP_STATISTIC > 0
 	tx_counter++;
 #endif
 
-	__HAL_CAN_CLEAR_FLAG(hcan, clear_flag);
-
-	// Disable Transmit mailbox empty Interrupt
+	// Transmit mailbox empty Interrupt
 	__HAL_CAN_ENABLE_IT(hcan, CAN_IT_TME);
-
 }
 
 void HAL_CAN_RxCpltCallback(CAN_HandleTypeDef* hcan)
