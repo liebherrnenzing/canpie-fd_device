@@ -467,7 +467,7 @@ CpStatus_tv CpCoreBufferSend(CpPort_ts * ptsPortV, uint8_t ubBufferIdxV)
 
 		for (i = 0; i < atsCan1MsgS[ubBufferIdxV].ubMsgDLC; i++)
 		{
-			HCAN1.pTxMsg->Data[i] = atsCan1MsgS[ubBufferIdxV].aubData[i];
+			HCAN1.pTxMsg->Data[i] = atsCan1MsgS[ubBufferIdxV].tuMsgData.aubByte[i];
 		}
 
 		if (HAL_CAN_Transmit_IT_MOD(&HCAN1,&tx_mailbox) != HAL_OK)
@@ -519,7 +519,7 @@ CpStatus_tv CpCoreBufferSetData(CpPort_ts * ptsPortV, uint8_t ubBufferIdxV, uint
 			{
 				// alternative way but maybe not so fast
 				// CpMsgSetData(&atsCan1MsgS[ubBufferIdxV], ubCntT, *pubSrcDataV);
-				atsCan1MsgS[ubBufferIdxV].aubData[ubCntT] = *pubSrcDataV;
+				atsCan1MsgS[ubBufferIdxV].tuMsgData.aubByte[ubCntT] = *pubSrcDataV;
 				pubSrcDataV++;
 			}
 		}
@@ -1562,14 +1562,14 @@ void HAL_CAN_RxCpltCallback(CAN_HandleTypeDef* hcan)
 
 	CpMsgSetDlc(pcan_msg, hcan->pRxMsg->DLC);
 
-	pcan_msg->aubData[0] = hcan->pRxMsg->Data[0];
-	pcan_msg->aubData[1] = hcan->pRxMsg->Data[1];
-	pcan_msg->aubData[2] = hcan->pRxMsg->Data[2];
-	pcan_msg->aubData[3] = hcan->pRxMsg->Data[3];
-	pcan_msg->aubData[4] = hcan->pRxMsg->Data[4];
-	pcan_msg->aubData[5] = hcan->pRxMsg->Data[5];
-	pcan_msg->aubData[6] = hcan->pRxMsg->Data[6];
-	pcan_msg->aubData[7] = hcan->pRxMsg->Data[7];
+	pcan_msg->tuMsgData.aubByte[0] = hcan->pRxMsg->Data[0];
+	pcan_msg->tuMsgData.aubByte[1] = hcan->pRxMsg->Data[1];
+	pcan_msg->tuMsgData.aubByte[2] = hcan->pRxMsg->Data[2];
+	pcan_msg->tuMsgData.aubByte[3] = hcan->pRxMsg->Data[3];
+	pcan_msg->tuMsgData.aubByte[4] = hcan->pRxMsg->Data[4];
+	pcan_msg->tuMsgData.aubByte[5] = hcan->pRxMsg->Data[5];
+	pcan_msg->tuMsgData.aubByte[6] = hcan->pRxMsg->Data[6];
+	pcan_msg->tuMsgData.aubByte[7] = hcan->pRxMsg->Data[7];
 
 	//pcan_msg->ulMsgUser = hcan->pRxMsg->FIFONumber;
 
