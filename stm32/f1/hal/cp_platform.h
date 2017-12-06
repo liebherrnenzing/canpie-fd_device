@@ -216,6 +216,11 @@ struct CpPortEmbedded_s
 	 */
 	uint8_t ubPhyIf;
 
+	/*!   logical CAN interface number,
+	 **    first index is 0
+	 */
+	uint8_t     ubLogIf;
+
 	/*!   Private driver information
 	 */
 	uint8_t ubDrvInfo;
