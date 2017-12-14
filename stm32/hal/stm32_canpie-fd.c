@@ -124,6 +124,7 @@ static CpErrHandler_Fn /*@null@*/pfnErrHandlerS = CPP_NULL;
 static CpStatus_tv get_next_free_filter_number(uint8_t *filter_number);
 static HAL_StatusTypeDef can_filter_config(uint32_t ulIdentifierV, uint32_t ulAcceptMaskV, uint8_t ubFormatV, uint8_t filter_number, uint32_t fifo, bool_t activate);
 static CpStatus_tv can_filter_init(uint8_t ubBufferIdxV, uint32_t ulIdentifierV, uint32_t ulAcceptMaskV, uint8_t ubFormatV);
+
 static CpStatus_tv search_for_already_defined_filter(uint8_t ubBufferIdxV, uint8_t *filter_number);
 static HAL_StatusTypeDef HAL_CAN_Transmit_IT_MOD(CAN_HandleTypeDef* hcan, uint32_t *used_tx_mailbox);
 
@@ -390,6 +391,8 @@ CpStatus_tv CpCoreBufferRelease(CpPort_ts * ptsPortV, uint8_t ubBufferIdxV)
 {
 	CpStatus_tv tvStatusT;
 	HAL_StatusTypeDef hal_status = HAL_OK;
+	CpStatus_tv status;
+	uint8_t filter_number;
 
 	//----------------------------------------------------------------
 	// test parameter ptsPortV and ubBufferIdxV
@@ -398,10 +401,20 @@ CpStatus_tv CpCoreBufferRelease(CpPort_ts * ptsPortV, uint8_t ubBufferIdxV)
 	if (tvStatusT == eCP_ERR_NONE)
 	{
 		// release filter
-		hal_status = can_filter_init(ubBufferIdxV, 0, 0, 0);
-		if (HAL_OK != hal_status)
+
+		// check if the buffer is already defined to a filter
+		status = search_for_already_defined_filter(ubBufferIdxV, &filter_number);
+
+		// it is not really nice but I use the status to check if a filter exists or not
+		// if (eCP_ERR_INIT_FAIL == status)
+		// {
+				// there is no filter assigned to this buffer so do nothing
+		// }
+
+		if (eCP_ERR_NONE == status)
 		{
-			tvStatusT = eCP_ERR_INIT_FAIL;
+			// clear filter
+			hal_status = can_filter_config(0, 0, 0, filter_number, CAN_FIFO0, 0);
 		}
 
 		// clear buffer
@@ -409,6 +422,11 @@ CpStatus_tv CpCoreBufferRelease(CpPort_ts * ptsPortV, uint8_t ubBufferIdxV)
 
 		// set buffer to invalid
 		atsCan1MsgS[ubBufferIdxV].ulMsgUser = CP_BUFFER_IVAL;
+	}
+
+	if (HAL_OK != hal_status)
+	{
+		return eCP_ERR_INIT_FAIL;
 	}
 
 	return (tvStatusT);
@@ -429,11 +447,11 @@ CpStatus_tv CpCoreBufferSend(CpPort_ts * ptsPortV, uint8_t ubBufferIdxV)
 	//
 	tvStatusT = CheckParam(ptsPortV, ubBufferIdxV, eDRV_INFO_INIT);
 
-	// check if buffer is used for tx and valid
-	if((atsCan1MsgS[ubBufferIdxV].ulMsgUser & (CP_BUFFER_VAL | CP_BUFFER_TRM)) != (CP_BUFFER_VAL | CP_BUFFER_TRM))
-	{
-		return eCP_ERR_BUFFER;
-	}
+//	// check if buffer is used for tx and valid
+//	if((atsCan1MsgS[ubBufferIdxV].ulMsgUser & (CP_BUFFER_VAL | CP_BUFFER_TRM)) != (CP_BUFFER_VAL | CP_BUFFER_TRM))
+//	{
+//		return eCP_ERR_BUFFER;
+//	}
 
 	if (tvStatusT == eCP_ERR_NONE)
 	{
@@ -518,8 +536,8 @@ CpStatus_tv CpCoreBufferSetData(CpPort_ts * ptsPortV, uint8_t ubBufferIdxV, uint
 			for (ubCntT = ubStartPosV; ubCntT < ubSizeV; ubCntT++)
 			{
 				// alternative way but maybe not so fast
-				// CpMsgSetData(&atsCan1MsgS[ubBufferIdxV], ubCntT, *pubSrcDataV);
-				atsCan1MsgS[ubBufferIdxV].tuMsgData.aubByte[ubCntT] = *pubSrcDataV;
+				CpMsgSetData(&atsCan1MsgS[ubBufferIdxV], ubCntT, *pubSrcDataV);
+				//atsCan1MsgS[ubBufferIdxV].tuMsgData.aubByte[ubCntT] = *pubSrcDataV;
 				pubSrcDataV++;
 			}
 		}
@@ -790,16 +808,16 @@ CpStatus_tv CpCoreDriverInit(uint8_t ubPhyIfV, CpPort_ts * ptsPortV, uint8_t ubC
 				// hardware initialization
 				//
 
-				// release all buffers and
-				for (i = eCP_BUFFER_1; i < CP_BUFFER_MAX; i++)
-				{
-					CpCoreBufferRelease(ptsPortV, i);
-				}
-
 				// clear filter to buffer mapping
 				for (i = 0; i < MAX_CAN_FILTER_NUMBER; i++)
 				{
 					filter_to_cp_buffer[i] = BUFFER_NONE;
+				}
+
+				// release all buffers and
+				for (i = eCP_BUFFER_1; i < CP_BUFFER_MAX; i++)
+				{
+					CpCoreBufferRelease(ptsPortV, i);
 				}
 
 				for (i = 0; i < 3; i++)
@@ -825,6 +843,11 @@ CpStatus_tv CpCoreDriverInit(uint8_t ubPhyIfV, CpPort_ts * ptsPortV, uint8_t ubC
 				HCAN1.Init.NART = DISABLE;
 				HCAN1.Init.RFLM = DISABLE;
 				HCAN1.Init.TXFP = DISABLE;
+
+//				if (can_filter_clear_all() != eCP_ERR_NONE)
+//				{
+//					return (eCP_ERR_INIT_FAIL);
+//				}
 
 				if (HAL_CAN_Init(&HCAN1) != HAL_OK)
 				{
@@ -1165,7 +1188,7 @@ CpStatus_tv CpCoreStatistic(CpPort_ts * ptsPortV, CpStatistic_ts * ptsStatsV)
  * @param ubFormatV
  * @param filter_number
  * @param activate
- * @return
+ * @retval HAL status
  */
 static HAL_StatusTypeDef can_filter_config(uint32_t ulIdentifierV, uint32_t ulAcceptMaskV, uint8_t ubFormatV, uint8_t filter_number, uint32_t fifo, bool_t activate)
 {
@@ -1200,7 +1223,7 @@ static HAL_StatusTypeDef can_filter_config(uint32_t ulIdentifierV, uint32_t ulAc
 
 /**
  * @param filter_number
- * @return
+ * @return Error code is defined by the #CpErr_e enumeration. If no error occurred, the function will return the value \c #eCP_ERR_NONE.
  */
 static CpStatus_tv get_next_free_filter_number(uint8_t *filter_number)
 {
@@ -1221,7 +1244,7 @@ static CpStatus_tv get_next_free_filter_number(uint8_t *filter_number)
 /**
  * @param ubBufferIdxV
  * @param filter_number
- * @return
+ * @return Error code is defined by the #CpErr_e enumeration. If no error occurred, the function will return the value \c #eCP_ERR_NONE.
  */
 static CpStatus_tv search_for_already_defined_filter(uint8_t ubBufferIdxV, uint8_t *filter_number)
 {
@@ -1244,7 +1267,7 @@ static CpStatus_tv search_for_already_defined_filter(uint8_t ubBufferIdxV, uint8
  * @param ulIdentifierV
  * @param ulAcceptMaskV
  * @param ubFormatV
- * @return
+ * @return Error code is defined by the #CpErr_e enumeration. If no error occurred, the function will return the value \c #eCP_ERR_NONE.
  */
 static CpStatus_tv can_filter_init(uint8_t ubBufferIdxV, uint32_t ulIdentifierV, uint32_t ulAcceptMaskV, uint8_t ubFormatV)
 {
@@ -1290,6 +1313,7 @@ static CpStatus_tv can_filter_init(uint8_t ubBufferIdxV, uint32_t ulIdentifierV,
 
 	return eCP_ERR_INIT_FAIL;
 }
+
 
 #define CAN_TI0R_STID_BIT_POSITION    ((uint32_t)21)  /* Position of LSB bits STID in register CAN_TI0R */
 #define CAN_TI0R_EXID_BIT_POSITION    ((uint32_t) 3)  /* Position of LSB bits EXID in register CAN_TI0R */
