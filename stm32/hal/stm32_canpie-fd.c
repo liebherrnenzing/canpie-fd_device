@@ -26,7 +26,7 @@ static CanRxMsgTypeDef can_rx_msg_fifo0;
 static CanTxMsgTypeDef can_tx_msg;
 
 static int8_t filter_to_cp_buffer[MAX_CAN_FILTER_NUMBER];
-static uint8_t tx_mailbox_to_buffer[3];
+static int8_t tx_mailbox_to_buffer[3];
 
 #if CP_STATISTIC > 0
 static uint32_t tx1_counter;
@@ -498,9 +498,11 @@ CpStatus_tv CpCoreBufferSend(CpPort_ts * ptsPortV, uint8_t ubBufferIdxV)
 			atsCan1MsgS[ubBufferIdxV].ulMsgUser |= CP_BUFFER_PND;
 			return eCP_ERR_TRM_FULL;
 		}
-
-		/* save which buffer was used for tx */
-		tx_mailbox_to_buffer[tx_mailbox] = ubBufferIdxV;
+		else
+		{
+			/* save which buffer was used for tx */
+			tx_mailbox_to_buffer[tx_mailbox] = ubBufferIdxV;
+		}
 	}
 
 	return (tvStatusT);
@@ -822,7 +824,7 @@ CpStatus_tv CpCoreDriverInit(uint8_t ubPhyIfV, CpPort_ts * ptsPortV, uint8_t ubC
 
 				for (i = 0; i < 3; i++)
 				{
-					tx_mailbox_to_buffer[3] = BUFFER_NONE;
+					tx_mailbox_to_buffer[i] = BUFFER_NONE;
 				}
 
 				HCAN1.Instance = CAN1;
