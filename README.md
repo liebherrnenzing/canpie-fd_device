@@ -1,1 +1,1 @@
-Here you find some device files for canpie-fd. Currently only stm32f1xx and stm32f4xx is supported. You can also get paid device files for different controllers from here http://www.microcontrol.net/produkte/protokollstacks/canpie-fd.
+Here you find a device file for canpie-fd. Currently only stm32f1xx and stm32f4xx is supported. You can also get paid device files for different controllers from here http://www.microcontrol.net/produkte/protokollstacks/canpie-fd.

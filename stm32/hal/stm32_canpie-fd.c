@@ -6,6 +6,14 @@
 
 #include <string.h>
 
+#ifndef CP_DEBUG
+#define CP_DEBUG  0
+#endif
+
+#if CP_DEBUG > 0
+#include "printf.h"
+#endif
+
 // Definitions
 #define HAL_CAN_TIMEOUT_VALUE  10U
 #define MAX_CAN_FILTER_NUMBER	14
@@ -74,6 +82,18 @@ static const struct hal_baudrate hal_baudrate_timing_42mhz[] =
 	{ eCP_BITRATE_1M, 3, CAN_SJW_1TQ, CAN_BS1_11TQ, CAN_BS2_2TQ}  // 1 MBit/s 85.7%
 };
 #endif
+
+static const struct hal_baudrate hal_baudrate_timing_40mhz[] =
+{
+	{ eCP_BITRATE_10K, 250, CAN_SJW_1TQ, CAN_BS1_11TQ, CAN_BS2_4TQ }, // 10 KBit/s 75%
+	{ eCP_BITRATE_20K, 125, CAN_SJW_1TQ, CAN_BS1_11TQ, CAN_BS2_4TQ }, // 20 KBit/s 75%
+	{ eCP_BITRATE_50K, 50, CAN_SJW_1TQ, CAN_BS1_11TQ, CAN_BS2_4TQ }, // 50 KBit/s 75%
+	{ eCP_BITRATE_100K, 25, CAN_SJW_1TQ, CAN_BS1_11TQ, CAN_BS2_4TQ }, // 100 KBit/s 75%
+	{ eCP_BITRATE_125K, 20, CAN_SJW_1TQ, CAN_BS1_11TQ, CAN_BS2_4TQ }, // 125 KBit/s 75%
+	{ eCP_BITRATE_250K, 10, CAN_SJW_1TQ, CAN_BS1_11TQ, CAN_BS2_4TQ }, // 250 KBit/s 75%
+	{ eCP_BITRATE_500K, 5, CAN_SJW_1TQ, CAN_BS1_11TQ, CAN_BS2_4TQ }, // 500 KBit/s 75%
+	{ eCP_BITRATE_1M, 2, CAN_SJW_1TQ, CAN_BS1_15TQ, CAN_BS2_5TQ }  // 1 MBit/s 75%
+};
 
 static const struct hal_baudrate hal_baudrate_timing_42mhz[] =
 {
@@ -207,10 +227,17 @@ CpStatus_tv CpCoreBitrate(CpPort_ts * ptsPortV, int32_t slNomBitRateV, int32_t s
 					case 21000000:
 						return (eCP_ERR_NOT_SUPPORTED);
 						break;
+
 					case 36000000:
 						p_hal_baudrate = hal_baudrate_timing_36mhz;
 						p_hal_end = hal_baudrate_timing_36mhz + sizeof(hal_baudrate_timing_36mhz) / sizeof(hal_baudrate_timing_36mhz[0]);
 						break;
+
+					case 40000000:
+						p_hal_baudrate = hal_baudrate_timing_40mhz;
+						p_hal_end = hal_baudrate_timing_40mhz + sizeof(hal_baudrate_timing_40mhz) / sizeof(hal_baudrate_timing_40mhz[0]);
+						break;
+
 					case 42000000:
 						p_hal_baudrate = hal_baudrate_timing_42mhz;
 						p_hal_end = hal_baudrate_timing_42mhz + sizeof(hal_baudrate_timing_42mhz) / sizeof(hal_baudrate_timing_42mhz[0]);
@@ -831,7 +858,6 @@ CpStatus_tv CpCoreDriverInit(uint8_t ubPhyIfV, CpPort_ts * ptsPortV, uint8_t ubC
 				HCAN1.pTxMsg = &can_tx_msg;
 				HCAN1.pRxMsg = &can_rx_msg_fifo0;
 				HCAN1.pRx1Msg = &can_rx_msg_fifo0;
-
 				HCAN1.Init.Mode = CAN_MODE_NORMAL;
 
 				// HCAN1.Init.Prescaler = 8;
@@ -1335,17 +1361,27 @@ static CpStatus_tv can_filter_init(uint8_t ubBufferIdxV, uint32_t ulIdentifierV,
 static HAL_StatusTypeDef HAL_CAN_Transmit_IT_MOD(CAN_HandleTypeDef* hcan, uint32_t *used_tx_mailbox)
 {
 	uint32_t transmitmailbox = CAN_TXSTATUS_NOMAILBOX;
+	uint32_t tmp, tmp2, tmp3;
+#ifdef CP_DEVICE_TX_STRATEGY_ROLL
+	static uint32_t current_tx_mailbox = CAN_TXMAILBOX_0;
+	uint32_t mailboxbusy;
+#endif
 
 	/* Check the parameters */
 	assert_param(IS_CAN_IDTYPE(hcan->pTxMsg->IDE));
 	assert_param(IS_CAN_RTR(hcan->pTxMsg->RTR));
 	assert_param(IS_CAN_DLC(hcan->pTxMsg->DLC));
 
-	if (((hcan->Instance->TSR & CAN_TSR_TME0) == CAN_TSR_TME0) || ((hcan->Instance->TSR & CAN_TSR_TME1) == CAN_TSR_TME1) || ((hcan->Instance->TSR & CAN_TSR_TME2) == CAN_TSR_TME2))
+	tmp = ((hcan->Instance->TSR & CAN_TSR_TME0) == CAN_TSR_TME0);
+	tmp2 = ((hcan->Instance->TSR & CAN_TSR_TME1) == CAN_TSR_TME1);
+	tmp3 = ((hcan->Instance->TSR & CAN_TSR_TME2) == CAN_TSR_TME2);
+
+	if ( tmp || tmp2 || tmp3)
 	{
 		/* Process Locked */
 		__HAL_LOCK(hcan);
 
+#ifndef CP_DEVICE_TX_STRATEGY_ROLL
 		/* Select one empty transmit mailbox */
 		if ((hcan->Instance->TSR & CAN_TSR_TME0) == CAN_TSR_TME0)
 		{
@@ -1359,6 +1395,55 @@ static HAL_StatusTypeDef HAL_CAN_Transmit_IT_MOD(CAN_HandleTypeDef* hcan, uint32
 		{
 			transmitmailbox = CAN_TXMAILBOX_2;
 		}
+#else
+		mailboxbusy = true;
+
+		while (mailboxbusy)
+		{
+			if (current_tx_mailbox == CAN_TXMAILBOX_0)
+			{
+				if ((hcan->Instance->TSR & CAN_TSR_TME0) == CAN_TSR_TME0)
+				{
+					// box empty
+					mailboxbusy = false;
+					transmitmailbox = CAN_TXMAILBOX_0;
+					current_tx_mailbox = CAN_TXMAILBOX_1;
+					break;
+				}
+				current_tx_mailbox = CAN_TXMAILBOX_1;
+			}
+
+			if (current_tx_mailbox == CAN_TXMAILBOX_1)
+			{
+				if ((hcan->Instance->TSR & CAN_TSR_TME1) == CAN_TSR_TME1)
+				{
+					// box empty
+					mailboxbusy = false;
+					transmitmailbox = CAN_TXMAILBOX_1;
+					current_tx_mailbox = CAN_TXMAILBOX_2;
+					break;
+				}
+				current_tx_mailbox = CAN_TXMAILBOX_2;
+			}
+
+			if (current_tx_mailbox == CAN_TXMAILBOX_2)
+			{
+				if ((hcan->Instance->TSR & CAN_TSR_TME2) == CAN_TSR_TME2)
+				{
+					// box empty
+					mailboxbusy = false;
+					transmitmailbox = CAN_TXMAILBOX_2;
+					current_tx_mailbox = CAN_TXMAILBOX_0;
+					break;
+				}
+				current_tx_mailbox = CAN_TXMAILBOX_0;
+			}
+		}
+#endif
+
+#if CP_DEBUG > 0
+		printf("\ntx_box:%ld ", transmitmailbox);
+#endif
 
 		/* Set up the Id */
 		hcan->Instance->sTxMailBox[transmitmailbox].TIR &= CAN_TI0R_TXRQ;
@@ -1404,14 +1489,14 @@ static HAL_StatusTypeDef HAL_CAN_Transmit_IT_MOD(CAN_HandleTypeDef* hcan, uint32
 		/* Set CAN error code to none */
 		hcan->ErrorCode = HAL_CAN_ERROR_NONE;
 
+		/* save which buffer used on this mailbox */
+		*used_tx_mailbox = transmitmailbox;
+
 		/* Process Unlocked */
 		__HAL_UNLOCK(hcan);
 
 		/* Request transmission */
 		hcan->Instance->sTxMailBox[transmitmailbox].TIR |= CAN_TI0R_TXRQ;
-
-		/* save which buffer used on this mailbox */
-		*used_tx_mailbox = transmitmailbox;
 
 		/* Enable Error warning, Error passive, Bus-off,
 		 Last error and Error Interrupts */
@@ -1439,9 +1524,15 @@ void HAL_CAN_TxCpltCallback(CAN_HandleTypeDef* hcan)
 	/**
 	 * @todo maybe some inline function for handling the message could be implemented
 	 */
+#if CP_DEBUG > 0
+	printf("\ntx_cb:");
+#endif
 
-	if (__HAL_CAN_GET_FLAG(hcan, CAN_FLAG_TXOK0))
+	if (__HAL_CAN_GET_FLAG(hcan, CAN_FLAG_RQCP0))
 	{
+#if CP_DEBUG > 0
+		printf("0");
+#endif
 		canpie_buffer_number = tx_mailbox_to_buffer[CAN_TXMAILBOX_0];
 		//-----------------------------------------------------------------
 		// get pointer to CAN buffer
@@ -1471,8 +1562,11 @@ void HAL_CAN_TxCpltCallback(CAN_HandleTypeDef* hcan)
 		tx_mailbox_to_buffer[CAN_TXMAILBOX_0] = BUFFER_NONE;
 	}
 
-	if (__HAL_CAN_GET_FLAG(hcan, CAN_FLAG_TXOK1))
+	if (__HAL_CAN_GET_FLAG(hcan, CAN_FLAG_RQCP1))
 	{
+#if CP_DEBUG > 0
+		printf("1");
+#endif
 		canpie_buffer_number = tx_mailbox_to_buffer[CAN_TXMAILBOX_1];
 		//-----------------------------------------------------------------
 		// get pointer to CAN buffer
@@ -1502,8 +1596,11 @@ void HAL_CAN_TxCpltCallback(CAN_HandleTypeDef* hcan)
 		tx_mailbox_to_buffer[CAN_TXMAILBOX_1] = BUFFER_NONE;
 	}
 
-	if (__HAL_CAN_GET_FLAG(hcan, CAN_FLAG_TXOK2))
+	if (__HAL_CAN_GET_FLAG(hcan, CAN_FLAG_RQCP2))
 	{
+#if CP_DEBUG > 0
+		printf("2");
+#endif
 		canpie_buffer_number = tx_mailbox_to_buffer[CAN_TXMAILBOX_2];
 		//-----------------------------------------------------------------
 		// get pointer to CAN buffer
