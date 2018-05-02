@@ -127,11 +127,11 @@ static CpCanMsg_ts atsCan1MsgS[CP_BUFFER_MAX];
 static CpFifo_ts *aptsCan1FifoS[CP_BUFFER_MAX];
 
 /*!
-** \var aptsPortS
-**
-** For interrupts we need to know the CAN port information,
-** so store the pointer to the corresponding global port information.
-*/
+ ** \var aptsPortS
+ **
+ ** For interrupts we need to know the CAN port information,
+ ** so store the pointer to the corresponding global port information.
+ */
 static CpPort_ts * aptsPortS[CP_CHANNEL_MAX];
 
 //-------------------------------------------------------------------
@@ -435,7 +435,7 @@ CpStatus_tv CpCoreBufferRelease(CpPort_ts * ptsPortV, uint8_t ubBufferIdxV)
 		// it is not really nice but I use the status to check if a filter exists or not
 		// if (eCP_ERR_INIT_FAIL == status)
 		// {
-				// there is no filter assigned to this buffer so do nothing
+		// there is no filter assigned to this buffer so do nothing
 		// }
 
 		if (eCP_ERR_NONE == status)
@@ -515,7 +515,7 @@ CpStatus_tv CpCoreBufferSend(CpPort_ts * ptsPortV, uint8_t ubBufferIdxV)
 			HCAN1.pTxMsg->Data[i] = atsCan1MsgS[ubBufferIdxV].tuMsgData.aubByte[i];
 		}
 
-		if (HAL_CAN_Transmit_IT_MOD(&HCAN1,&tx_mailbox) != HAL_OK)
+		if (HAL_CAN_Transmit_IT_MOD(&HCAN1, &tx_mailbox) != HAL_OK)
 		{
 			//---------------------------------------------------
 			// mark this buffer for transmission,
@@ -1035,7 +1035,7 @@ CpStatus_tv CpCoreFifoRelease(CpPort_ts * ptsPortV, uint8_t ubBufferIdxV)
 	tvStatusT = CheckParam(ptsPortV, ubBufferIdxV, eDRV_INFO_INIT);
 	if (tvStatusT == eCP_ERR_NONE)
 	{
-        aptsCan1FifoS[ubBufferIdxV] = 0L;
+		aptsCan1FifoS[ubBufferIdxV] = 0L;
 	}
 
 	return (tvStatusT);
@@ -1057,7 +1057,7 @@ CpStatus_tv CpCoreFifoWrite(CpPort_ts * ptsPortV, uint8_t ubBufferIdxV, CpCanMsg
 	tvStatusT = CheckParam(ptsPortV, ubBufferIdxV, eDRV_INFO_INIT);
 
 	// check if buffer is at least valid
-	if((atsCan1MsgS[ubBufferIdxV].ulMsgUser & (CP_BUFFER_VAL)) != (CP_BUFFER_VAL))
+	if ((atsCan1MsgS[ubBufferIdxV].ulMsgUser & (CP_BUFFER_VAL)) != (CP_BUFFER_VAL))
 	{
 		return eCP_ERR_BUFFER;
 	}
@@ -1342,7 +1342,6 @@ static CpStatus_tv can_filter_init(uint8_t ubBufferIdxV, uint32_t ulIdentifierV,
 	return eCP_ERR_INIT_FAIL;
 }
 
-
 #define CAN_TI0R_STID_BIT_POSITION    ((uint32_t)21)  /* Position of LSB bits STID in register CAN_TI0R */
 #define CAN_TI0R_EXID_BIT_POSITION    ((uint32_t) 3)  /* Position of LSB bits EXID in register CAN_TI0R */
 #define CAN_TDL0R_DATA0_BIT_POSITION  ((uint32_t) 0)  /* Position of LSB bits DATA0 in register CAN_TDL0R */
@@ -1376,7 +1375,7 @@ static HAL_StatusTypeDef HAL_CAN_Transmit_IT_MOD(CAN_HandleTypeDef* hcan, uint32
 	tmp2 = ((hcan->Instance->TSR & CAN_TSR_TME1) == CAN_TSR_TME1);
 	tmp3 = ((hcan->Instance->TSR & CAN_TSR_TME2) == CAN_TSR_TME2);
 
-	if ( tmp || tmp2 || tmp3)
+	if (tmp || tmp2 || tmp3)
 	{
 		/* Process Locked */
 		__HAL_LOCK(hcan);
@@ -1537,6 +1536,11 @@ void HAL_CAN_TxCpltCallback(CAN_HandleTypeDef* hcan)
 		//-----------------------------------------------------------------
 		// get pointer to CAN buffer
 		//
+		if (canpie_buffer_number == BUFFER_NONE)
+		{
+			goto clear_exit;
+		}
+
 		ptsCanMsgT = &atsCan1MsgS[canpie_buffer_number];
 
 		if (aptsCan1FifoS[canpie_buffer_number] == 0L)
@@ -1571,6 +1575,11 @@ void HAL_CAN_TxCpltCallback(CAN_HandleTypeDef* hcan)
 		//-----------------------------------------------------------------
 		// get pointer to CAN buffer
 		//
+		if (canpie_buffer_number == BUFFER_NONE)
+		{
+			goto clear_exit;
+		}
+
 		ptsCanMsgT = &atsCan1MsgS[canpie_buffer_number];
 
 		if (aptsCan1FifoS[canpie_buffer_number] == 0L)
@@ -1605,6 +1614,11 @@ void HAL_CAN_TxCpltCallback(CAN_HandleTypeDef* hcan)
 		//-----------------------------------------------------------------
 		// get pointer to CAN buffer
 		//
+		if (canpie_buffer_number == BUFFER_NONE)
+		{
+			goto clear_exit;
+		}
+
 		ptsCanMsgT = &atsCan1MsgS[canpie_buffer_number];
 
 		if (aptsCan1FifoS[canpie_buffer_number] == 0L)
@@ -1648,6 +1662,7 @@ void HAL_CAN_TxCpltCallback(CAN_HandleTypeDef* hcan)
 	tx1_counter++;
 #endif
 
+clear_exit:
 	// Transmit mailbox empty Interrupt
 	__HAL_CAN_ENABLE_IT(hcan, CAN_IT_TME);
 }
