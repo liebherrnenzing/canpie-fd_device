@@ -21,6 +21,10 @@
 #define BUFFER_RX	(1)
 #define BUFFER_NONE	(-1)
 
+#define TX_MAILBOX_0 (0)
+#define TX_MAILBOX_1 (1)
+#define TX_MAILBOX_2 (2)
+
 #define  CP_BUFFER_IVAL		((uint32_t)0x00000000) // buffer invalid
 #define  CP_BUFFER_VAL		((uint32_t)0x00000001) // buffer valid
 #define  CP_BUFFER_TRM		((uint32_t)0x00000002) // Tx buffer
@@ -28,10 +32,6 @@
 
 #define  CP_BUFFER_PND		((uint32_t)0x00000020) // Tx buffer pending
 #define  CP_BUFFER_UPD		((uint32_t)0x00000040) // Rx buffer update
-
-static CanRxMsgTypeDef can_rx_msg_fifo0;
-//static CanRxMsgTypeDef can_rx_msg_fifo1;
-static CanTxMsgTypeDef can_tx_msg;
 
 static int8_t filter_to_cp_buffer[MAX_CAN_FILTER_NUMBER];
 static int8_t tx_mailbox_to_buffer[3];
@@ -146,7 +146,6 @@ static HAL_StatusTypeDef can_filter_config(uint32_t ulIdentifierV, uint32_t ulAc
 static CpStatus_tv can_filter_init(uint8_t ubBufferIdxV, uint32_t ulIdentifierV, uint32_t ulAcceptMaskV, uint8_t ubFormatV);
 
 static CpStatus_tv search_for_already_defined_filter(uint8_t ubBufferIdxV, uint8_t *filter_number);
-static HAL_StatusTypeDef HAL_CAN_Transmit_IT_MOD(CAN_HandleTypeDef* hcan, uint32_t *used_tx_mailbox);
 
 /*----------------------------------------------------------------------------*\
 ** Function implementation                                                    **
@@ -258,9 +257,9 @@ CpStatus_tv CpCoreBitrate(CpPort_ts * ptsPortV, int32_t slNomBitRateV, int32_t s
 					if (p_hal_baudrate->bitrate == slNomBitRateV)
 					{
 						HCAN1.Init.Prescaler = p_hal_baudrate->prescaler;
-						HCAN1.Init.SJW = p_hal_baudrate->sjw;
-						HCAN1.Init.BS1 = p_hal_baudrate->bs1;
-						HCAN1.Init.BS2 = p_hal_baudrate->bs2;
+						HCAN1.Init.SyncJumpWidth = p_hal_baudrate->sjw;
+						HCAN1.Init.TimeSeg1 = p_hal_baudrate->bs1;
+						HCAN1.Init.TimeSeg2 = p_hal_baudrate->bs2;
 
 						if (HAL_CAN_DeInit(&HCAN1) != HAL_OK)
 						{
@@ -441,7 +440,7 @@ CpStatus_tv CpCoreBufferRelease(CpPort_ts * ptsPortV, uint8_t ubBufferIdxV)
 		if (eCP_ERR_NONE == status)
 		{
 			// clear filter
-			hal_status = can_filter_config(0, 0, 0, filter_number, CAN_FIFO0, 0);
+			hal_status = can_filter_config(0, 0, 0, filter_number, CAN_RX_FIFO0, 0);
 		}
 
 		// clear buffer
@@ -465,9 +464,9 @@ CpStatus_tv CpCoreBufferRelease(CpPort_ts * ptsPortV, uint8_t ubBufferIdxV)
 //----------------------------------------------------------------------------//
 CpStatus_tv CpCoreBufferSend(CpPort_ts * ptsPortV, uint8_t ubBufferIdxV)
 {
-	uint8_t i;
 	CpStatus_tv tvStatusT;
 	uint32_t tx_mailbox;
+	CAN_TxHeaderTypeDef tx_header;
 
 	//----------------------------------------------------------------
 	// test parameter ptsPortV and ubBufferIdxV
@@ -487,13 +486,13 @@ CpStatus_tv CpCoreBufferSend(CpPort_ts * ptsPortV, uint8_t ubBufferIdxV)
 		//
 		if (CpMsgIsExtended(&atsCan1MsgS[ubBufferIdxV]))
 		{
-			HCAN1.pTxMsg->ExtId = atsCan1MsgS[ubBufferIdxV].ulIdentifier;
-			HCAN1.pTxMsg->IDE = CAN_ID_EXT;
+			tx_header.ExtId = atsCan1MsgS[ubBufferIdxV].ulIdentifier;
+			tx_header.IDE = CAN_ID_EXT;
 		}
 		else
 		{
-			HCAN1.pTxMsg->StdId = atsCan1MsgS[ubBufferIdxV].ulIdentifier;
-			HCAN1.pTxMsg->IDE = CAN_ID_STD;
+			tx_header.StdId = atsCan1MsgS[ubBufferIdxV].ulIdentifier;
+			tx_header.IDE = CAN_ID_STD;
 		}
 
 		//-----------------------------------------------------------------
@@ -501,21 +500,17 @@ CpStatus_tv CpCoreBufferSend(CpPort_ts * ptsPortV, uint8_t ubBufferIdxV)
 		//
 		if (CpMsgIsRemote(&atsCan1MsgS[ubBufferIdxV]))
 		{
-			HCAN1.pTxMsg->RTR = CAN_RTR_REMOTE;
+			tx_header.RTR = CAN_RTR_REMOTE;
 		}
 		else
 		{
-			HCAN1.pTxMsg->RTR = CAN_RTR_DATA;
+			tx_header.RTR = CAN_RTR_DATA;
 		}
 
-		HCAN1.pTxMsg->DLC = atsCan1MsgS[ubBufferIdxV].ubMsgDLC;
+		tx_header.DLC = atsCan1MsgS[ubBufferIdxV].ubMsgDLC;
+		tx_header.TransmitGlobalTime = DISABLE;
 
-		for (i = 0; i < atsCan1MsgS[ubBufferIdxV].ubMsgDLC; i++)
-		{
-			HCAN1.pTxMsg->Data[i] = atsCan1MsgS[ubBufferIdxV].tuMsgData.aubByte[i];
-		}
-
-		if (HAL_CAN_Transmit_IT_MOD(&HCAN1, &tx_mailbox) != HAL_OK)
+		if (HAL_CAN_AddTxMessage(&HCAN1, &tx_header, &atsCan1MsgS[ubBufferIdxV].tuMsgData.aubByte[0], &tx_mailbox) != HAL_OK)
 		{
 			//---------------------------------------------------
 			// mark this buffer for transmission,
@@ -528,6 +523,22 @@ CpStatus_tv CpCoreBufferSend(CpPort_ts * ptsPortV, uint8_t ubBufferIdxV)
 		else
 		{
 			/* save which buffer was used for tx */
+			switch (tx_mailbox)
+			{
+				case 1:
+					tx_mailbox = 0;
+					break;
+				case 2:
+					tx_mailbox = 1;
+					break;
+				case 4:
+					tx_mailbox = 2;
+					break;
+				default:
+					return eCP_ERR_GENERIC;
+					break;
+			}
+
 			tx_mailbox_to_buffer[tx_mailbox] = ubBufferIdxV;
 		}
 	}
@@ -607,6 +618,8 @@ CpStatus_tv CpCoreBufferSetDlc(CpPort_ts * ptsPortV, uint8_t ubBufferIdxV, uint8
 CpStatus_tv CpCoreCanMode(CpPort_ts * ptsPortV, uint8_t ubModeV)
 {
 	HAL_StatusTypeDef hal_status = HAL_OK;
+	HAL_StatusTypeDef hal_status1 = HAL_OK;
+	HAL_StatusTypeDef hal_status2 = HAL_OK;
 	CpStatus_tv tvStatusT = eCP_ERR_CHANNEL;
 
 	//----------------------------------------------------------------
@@ -626,44 +639,16 @@ CpStatus_tv CpCoreCanMode(CpPort_ts * ptsPortV, uint8_t ubModeV)
 				// Stop the CAN controller (passive on the bus)
 				//
 				case eCP_MODE_STOP:
-
-					// Transmit mailbox empty Interrupt
-					__HAL_CAN_DISABLE_IT(&HCAN1, CAN_IT_TME);
-
-					// FIFO 0 message pending Interrupt
-					__HAL_CAN_DISABLE_IT(&HCAN1, CAN_IT_FMP0);
-
-					// FIFO 1 message pending Interrupt
-					__HAL_CAN_DISABLE_IT(&HCAN1, CAN_IT_FMP1);
-
-					// Error warning, Error passive, Bus-off, Last error code and Error Interrupts
-					__HAL_CAN_DISABLE_IT(&HCAN1, CAN_IT_EWG | CAN_IT_EPV | CAN_IT_BOF | CAN_IT_LEC | CAN_IT_ERR);
-
-					// Request initialization
-					HAL_CAN_Sleep(&HCAN1);
-
+					hal_status = HAL_CAN_Stop(&HCAN1);
+					hal_status1 = HAL_CAN_DeactivateNotification(&HCAN1, CAN_IT_TX_MAILBOX_EMPTY | CAN_IT_RX_FIFO0_MSG_PENDING |  CAN_IT_RX_FIFO1_MSG_PENDING | CAN_IT_ERROR_WARNING | CAN_IT_ERROR_PASSIVE | CAN_IT_BUSOFF | CAN_IT_LAST_ERROR_CODE | CAN_IT_ERROR);
 					break;
 
 					//--------------------------------------------------------
 					// Start the CAN controller (active on the bus)
 					//
 				case eCP_MODE_START:
-
-					// Transmit mailbox empty Interrupt
-					__HAL_CAN_ENABLE_IT(&HCAN1, CAN_IT_TME);
-#if 1
-					(void) HAL_CAN_Receive_IT(&HCAN1, CAN_FIFO0);
-					(void) HAL_CAN_Receive_IT(&HCAN1, CAN_FIFO1);
-#else
-					// FIFO 0 message pending Interrupt
-					__HAL_CAN_ENABLE_IT(&HCAN1, CAN_IT_FMP0);
-
-					// FIFO 1 message pending Interrupt
-					__HAL_CAN_ENABLE_IT(&HCAN1, CAN_IT_FMP1);
-#endif
-					// Request initialization
-					HAL_CAN_WakeUp(&HCAN1);
-
+					hal_status = HAL_CAN_ActivateNotification(&HCAN1, CAN_IT_RX_FIFO0_MSG_PENDING | CAN_IT_RX_FIFO1_MSG_PENDING | CAN_IT_TX_MAILBOX_EMPTY);
+					hal_status1 = HAL_CAN_Start(&HCAN1);
 					break;
 
 					//--------------------------------------------------------
@@ -671,21 +656,9 @@ CpStatus_tv CpCoreCanMode(CpPort_ts * ptsPortV, uint8_t ubModeV)
 					//
 				case eCP_MODE_LISTEN_ONLY:
 					HCAN1.Init.Mode = CAN_MODE_SILENT;
-
-					// Transmit mailbox empty Interrupt
-					__HAL_CAN_ENABLE_IT(&HCAN1, CAN_IT_TME);
-#if 1
-					(void) HAL_CAN_Receive_IT(&HCAN1, CAN_FIFO0);
-					(void) HAL_CAN_Receive_IT(&HCAN1, CAN_FIFO1);
-#else
-					// FIFO 0 message pending Interrupt
-					__HAL_CAN_ENABLE_IT(&HCAN1, CAN_IT_FMP0);
-
-					// FIFO 1 message pending Interrupt
-					__HAL_CAN_ENABLE_IT(&HCAN1, CAN_IT_FMP1);
-#endif
-					HCAN1.Init.Mode = CAN_MODE_SILENT;
-					hal_status = HAL_CAN_Init(&HCAN1);
+					hal_status = HAL_CAN_ActivateNotification(&HCAN1, CAN_IT_RX_FIFO0_MSG_PENDING | CAN_IT_RX_FIFO1_MSG_PENDING | CAN_IT_TX_MAILBOX_EMPTY);
+					hal_status1 = HAL_CAN_Init(&HCAN1);
+					hal_status2 = HAL_CAN_Start(&HCAN1);
 
 					break;
 
@@ -699,7 +672,7 @@ CpStatus_tv CpCoreCanMode(CpPort_ts * ptsPortV, uint8_t ubModeV)
 		}
 	}
 
-	if (HAL_OK != hal_status)
+	if ((HAL_OK != hal_status) | (HAL_OK != hal_status1) | (HAL_OK != hal_status2))
 	{
 		return eCP_ERR_INIT_FAIL;
 	}
@@ -855,22 +828,14 @@ CpStatus_tv CpCoreDriverInit(uint8_t ubPhyIfV, CpPort_ts * ptsPortV, uint8_t ubC
 				}
 
 				HCAN1.Instance = CAN1;
-				HCAN1.pTxMsg = &can_tx_msg;
-				HCAN1.pRxMsg = &can_rx_msg_fifo0;
-				HCAN1.pRx1Msg = &can_rx_msg_fifo0;
 				HCAN1.Init.Mode = CAN_MODE_NORMAL;
 
-				// HCAN1.Init.Prescaler = 8;
-				// HCAN1.Init.SJW = CAN_SJW_1TQ;
-				// HCAN1.Init.BS1 = CAN_BS1_15TQ;
-				// HCAN1.Init.BS2 = CAN_BS2_5TQ;
-
-				HCAN1.Init.TTCM = DISABLE;
-				HCAN1.Init.ABOM = DISABLE;
-				HCAN1.Init.AWUM = DISABLE;
-				HCAN1.Init.NART = DISABLE;
-				HCAN1.Init.RFLM = DISABLE;
-				HCAN1.Init.TXFP = DISABLE;
+				HCAN1.Init.TimeTriggeredMode = DISABLE;
+				HCAN1.Init.AutoBusOff = DISABLE;
+				HCAN1.Init.AutoWakeUp = DISABLE;
+				HCAN1.Init.AutoRetransmission = DISABLE;
+				HCAN1.Init.ReceiveFifoLocked = DISABLE;
+				HCAN1.Init.TransmitFifoPriority = DISABLE;
 
 //				if (can_filter_clear_all() != eCP_ERR_NONE)
 //				{
@@ -878,6 +843,11 @@ CpStatus_tv CpCoreDriverInit(uint8_t ubPhyIfV, CpPort_ts * ptsPortV, uint8_t ubC
 //				}
 
 				if (HAL_CAN_Init(&HCAN1) != HAL_OK)
+				{
+					return (eCP_ERR_INIT_FAIL);
+				}
+
+				if (HAL_CAN_Start(&HCAN1) != HAL_OK)
 				{
 					return (eCP_ERR_INIT_FAIL);
 				}
@@ -1200,10 +1170,15 @@ CpStatus_tv CpCoreStatistic(CpPort_ts * ptsPortV, CpStatistic_ts * ptsStatsV)
 		if (ptsPortV->ubDrvInfo > eDRV_INFO_OFF)
 		{
 			tvStatusT = eCP_ERR_NONE;
-
+#if CP_STATISTIC > 0
+			ptsStatsV->ulErrMsgCount = tx1_counter;
+			ptsStatsV->ulRcvMsgCount = rx1_counter;
+			ptsStatsV->ulTrmMsgCount = err1_counter;
+#else
 			ptsStatsV->ulErrMsgCount = 0;
 			ptsStatsV->ulRcvMsgCount = 0;
 			ptsStatsV->ulTrmMsgCount = 0;
+#endif
 		}
 	}
 
@@ -1220,10 +1195,10 @@ CpStatus_tv CpCoreStatistic(CpPort_ts * ptsPortV, CpStatistic_ts * ptsStatsV)
  */
 static HAL_StatusTypeDef can_filter_config(uint32_t ulIdentifierV, uint32_t ulAcceptMaskV, uint8_t ubFormatV, uint8_t filter_number, uint32_t fifo, bool_t activate)
 {
-	CAN_FilterConfTypeDef filter_config;
+	CAN_FilterTypeDef filter_config;
 
 	// config filter only use 32Bit
-	filter_config.FilterNumber = filter_number;
+	filter_config.FilterBank = filter_number;
 	filter_config.FilterMode = CAN_FILTERMODE_IDMASK;
 	filter_config.FilterScale = CAN_FILTERSCALE_32BIT;
 
@@ -1244,7 +1219,7 @@ static HAL_StatusTypeDef can_filter_config(uint32_t ulIdentifierV, uint32_t ulAc
 
 	filter_config.FilterFIFOAssignment = fifo;
 	filter_config.FilterActivation = activate;
-	filter_config.BankNumber = 14;
+	filter_config.SlaveStartFilterBank = 14;
 
 	return HAL_CAN_ConfigFilter(&HCAN1, &filter_config);
 }
@@ -1302,7 +1277,7 @@ static CpStatus_tv can_filter_init(uint8_t ubBufferIdxV, uint32_t ulIdentifierV,
 	CpStatus_tv status;
 	uint8_t filter_number;
 	HAL_StatusTypeDef hal_status;
-	static uint32_t fifo_number = CAN_FIFO0;
+	static uint32_t fifo_number = CAN_RX_FIFO0;
 
 	// check if the buffer is already defined to a filter
 	status = search_for_already_defined_filter(ubBufferIdxV, &filter_number);
@@ -1321,18 +1296,6 @@ static CpStatus_tv can_filter_init(uint8_t ubBufferIdxV, uint32_t ulIdentifierV,
 		// config filter
 		hal_status = can_filter_config(ulIdentifierV, ulAcceptMaskV, ubFormatV, filter_number, fifo_number, 1);
 
-#if 0
-		// try to use booth FIFO in parallel
-		if(fifo_number == CAN_FIFO0)
-		{
-			fifo_number = CAN_FIFO1;
-		}
-		else
-		{
-			fifo_number = CAN_FIFO0;
-		}
-#endif
-
 		if (HAL_OK == hal_status)
 		{
 			return eCP_ERR_NONE;
@@ -1342,307 +1305,47 @@ static CpStatus_tv can_filter_init(uint8_t ubBufferIdxV, uint32_t ulIdentifierV,
 	return eCP_ERR_INIT_FAIL;
 }
 
-#define CAN_TI0R_STID_BIT_POSITION    ((uint32_t)21)  /* Position of LSB bits STID in register CAN_TI0R */
-#define CAN_TI0R_EXID_BIT_POSITION    ((uint32_t) 3)  /* Position of LSB bits EXID in register CAN_TI0R */
-#define CAN_TDL0R_DATA0_BIT_POSITION  ((uint32_t) 0)  /* Position of LSB bits DATA0 in register CAN_TDL0R */
-#define CAN_TDL0R_DATA1_BIT_POSITION  ((uint32_t) 8)  /* Position of LSB bits DATA1 in register CAN_TDL0R */
-#define CAN_TDL0R_DATA2_BIT_POSITION  ((uint32_t)16)  /* Position of LSB bits DATA2 in register CAN_TDL0R */
-#define CAN_TDL0R_DATA3_BIT_POSITION  ((uint32_t)24)  /* Position of LSB bits DATA3 in register CAN_TDL0R */
-
-/**
- * @brief  Initiates and transmits a CAN frame message.
- * @param  hcan: pointer to a CAN_HandleTypeDef structure that contains
- *         the configuration information for the specified CAN.
- * @param ubBufferIdxV canpie buffer number
- * @param used_tx_mailbox used mailbox for transmit
- * @retval HAL status
- */
-static HAL_StatusTypeDef HAL_CAN_Transmit_IT_MOD(CAN_HandleTypeDef* hcan, uint32_t *used_tx_mailbox)
-{
-	uint32_t transmitmailbox = CAN_TXSTATUS_NOMAILBOX;
-	uint32_t tmp, tmp2, tmp3;
-#ifdef CP_DEVICE_TX_STRATEGY_ROLL
-	static uint32_t current_tx_mailbox = CAN_TXMAILBOX_0;
-	uint32_t mailboxbusy;
-#endif
-
-	/* Check the parameters */
-	assert_param(IS_CAN_IDTYPE(hcan->pTxMsg->IDE));
-	assert_param(IS_CAN_RTR(hcan->pTxMsg->RTR));
-	assert_param(IS_CAN_DLC(hcan->pTxMsg->DLC));
-
-	tmp = ((hcan->Instance->TSR & CAN_TSR_TME0) == CAN_TSR_TME0);
-	tmp2 = ((hcan->Instance->TSR & CAN_TSR_TME1) == CAN_TSR_TME1);
-	tmp3 = ((hcan->Instance->TSR & CAN_TSR_TME2) == CAN_TSR_TME2);
-
-	if (tmp || tmp2 || tmp3)
-	{
-		/* Process Locked */
-		__HAL_LOCK(hcan);
-
-#ifndef CP_DEVICE_TX_STRATEGY_ROLL
-		/* Select one empty transmit mailbox */
-		if ((hcan->Instance->TSR & CAN_TSR_TME0) == CAN_TSR_TME0)
-		{
-			transmitmailbox = CAN_TXMAILBOX_0;
-		}
-		else if ((hcan->Instance->TSR & CAN_TSR_TME1) == CAN_TSR_TME1)
-		{
-			transmitmailbox = CAN_TXMAILBOX_1;
-		}
-		else
-		{
-			transmitmailbox = CAN_TXMAILBOX_2;
-		}
-#else
-		mailboxbusy = true;
-
-		while (mailboxbusy)
-		{
-			if (current_tx_mailbox == CAN_TXMAILBOX_0)
-			{
-				if ((hcan->Instance->TSR & CAN_TSR_TME0) == CAN_TSR_TME0)
-				{
-					// box empty
-					mailboxbusy = false;
-					transmitmailbox = CAN_TXMAILBOX_0;
-					current_tx_mailbox = CAN_TXMAILBOX_1;
-					break;
-				}
-				current_tx_mailbox = CAN_TXMAILBOX_1;
-			}
-
-			if (current_tx_mailbox == CAN_TXMAILBOX_1)
-			{
-				if ((hcan->Instance->TSR & CAN_TSR_TME1) == CAN_TSR_TME1)
-				{
-					// box empty
-					mailboxbusy = false;
-					transmitmailbox = CAN_TXMAILBOX_1;
-					current_tx_mailbox = CAN_TXMAILBOX_2;
-					break;
-				}
-				current_tx_mailbox = CAN_TXMAILBOX_2;
-			}
-
-			if (current_tx_mailbox == CAN_TXMAILBOX_2)
-			{
-				if ((hcan->Instance->TSR & CAN_TSR_TME2) == CAN_TSR_TME2)
-				{
-					// box empty
-					mailboxbusy = false;
-					transmitmailbox = CAN_TXMAILBOX_2;
-					current_tx_mailbox = CAN_TXMAILBOX_0;
-					break;
-				}
-				current_tx_mailbox = CAN_TXMAILBOX_0;
-			}
-		}
-#endif
-
-#if CP_DEBUG > 0
-		printf("\ntx_box:%ld ", transmitmailbox);
-#endif
-
-		/* Set up the Id */
-		hcan->Instance->sTxMailBox[transmitmailbox].TIR &= CAN_TI0R_TXRQ;
-		if (hcan->pTxMsg->IDE == CAN_ID_STD)
-		{
-			assert_param(IS_CAN_STDID(hcan->pTxMsg->StdId));
-			hcan->Instance->sTxMailBox[transmitmailbox].TIR |= ((hcan->pTxMsg->StdId << 21U) | hcan->pTxMsg->RTR);
-		}
-		else
-		{
-			assert_param(IS_CAN_EXTID(hcan->pTxMsg->ExtId));
-			hcan->Instance->sTxMailBox[transmitmailbox].TIR |= ((hcan->pTxMsg->ExtId << 3U) | hcan->pTxMsg->IDE | hcan->pTxMsg->RTR);
-		}
-
-		/* Set up the DLC */
-		hcan->pTxMsg->DLC &= (uint8_t) 0x0000000F;
-		hcan->Instance->sTxMailBox[transmitmailbox].TDTR &= (uint32_t) 0xFFFFFFF0U;
-		hcan->Instance->sTxMailBox[transmitmailbox].TDTR |= hcan->pTxMsg->DLC;
-
-		/* Set up the data field */
-		hcan->Instance->sTxMailBox[transmitmailbox].TDLR = (((uint32_t) hcan->pTxMsg->Data[3U] << 24U) | ((uint32_t) hcan->pTxMsg->Data[2U] << 16U) | ((uint32_t) hcan->pTxMsg->Data[1U] << 8U)
-				| ((uint32_t) hcan->pTxMsg->Data[0U]));
-		hcan->Instance->sTxMailBox[transmitmailbox].TDHR = (((uint32_t) hcan->pTxMsg->Data[7U] << 24U) | ((uint32_t) hcan->pTxMsg->Data[6U] << 16U) | ((uint32_t) hcan->pTxMsg->Data[5U] << 8U)
-				| ((uint32_t) hcan->pTxMsg->Data[4U]));
-
-		/* Change CAN state */
-		switch (hcan->State)
-		{
-			case (HAL_CAN_STATE_BUSY_RX0):
-				hcan->State = HAL_CAN_STATE_BUSY_TX_RX0;
-				break;
-			case (HAL_CAN_STATE_BUSY_RX1):
-				hcan->State = HAL_CAN_STATE_BUSY_TX_RX1;
-				break;
-			case (HAL_CAN_STATE_BUSY_RX0_RX1):
-				hcan->State = HAL_CAN_STATE_BUSY_TX_RX0_RX1;
-				break;
-			default: /* HAL_CAN_STATE_READY */
-				hcan->State = HAL_CAN_STATE_BUSY_TX;
-				break;
-		}
-
-		/* Set CAN error code to none */
-		hcan->ErrorCode = HAL_CAN_ERROR_NONE;
-
-		/* save which buffer used on this mailbox */
-		*used_tx_mailbox = transmitmailbox;
-
-		/* Process Unlocked */
-		__HAL_UNLOCK(hcan);
-
-		/* Request transmission */
-		hcan->Instance->sTxMailBox[transmitmailbox].TIR |= CAN_TI0R_TXRQ;
-
-		/* Enable Error warning, Error passive, Bus-off,
-		 Last error and Error Interrupts */
-		__HAL_CAN_ENABLE_IT(hcan, CAN_IT_EWG | CAN_IT_EPV | CAN_IT_BOF | CAN_IT_LEC | CAN_IT_ERR | CAN_IT_TME);
-	}
-	else
-	{
-		/* Change CAN state */
-		hcan->State = HAL_CAN_STATE_ERROR;
-
-		/* Return function status */
-		return HAL_ERROR;
-	}
-
-	return HAL_OK;
-}
-
-void HAL_CAN_TxCpltCallback(CAN_HandleTypeDef* hcan)
+void HAL_CAN_TxMailbox0CompleteCallback(CAN_HandleTypeDef* hcan)
 {
 	int8_t canpie_buffer_number;
 	CpFifo_ts *ptsFifoT;
 	CpCanMsg_ts *ptsFifoMsgT;
 	CpCanMsg_ts *ptsCanMsgT;
 
-	/**
-	 * @todo maybe some inline function for handling the message could be implemented
-	 */
-#if CP_DEBUG > 0
-	printf("\ntx_cb:");
-#endif
-
-	if (__HAL_CAN_GET_FLAG(hcan, CAN_FLAG_RQCP0))
+	canpie_buffer_number = tx_mailbox_to_buffer[TX_MAILBOX_0];
+	//-----------------------------------------------------------------
+	// get pointer to CAN buffer
+	//
+	if (canpie_buffer_number == BUFFER_NONE)
 	{
-#if CP_DEBUG > 0
-		printf("0");
-#endif
-		canpie_buffer_number = tx_mailbox_to_buffer[CAN_TXMAILBOX_0];
-		//-----------------------------------------------------------------
-		// get pointer to CAN buffer
-		//
-		if (canpie_buffer_number == BUFFER_NONE)
-		{
-			goto clear_exit;
-		}
-
-		ptsCanMsgT = &atsCan1MsgS[canpie_buffer_number];
-
-		if (aptsCan1FifoS[canpie_buffer_number] == 0L)
-		{
-			if ((canpie_buffer_number != BUFFER_NONE) && (CPP_NULL != pfnTrmHandlerS))
-			{
-				pfnTrmHandlerS(&atsCan1MsgS[canpie_buffer_number], canpie_buffer_number);
-			}
-		}
-		else
-		{
-			ptsFifoT = aptsCan1FifoS[canpie_buffer_number];
-			if (CpFifoIsEmpty(ptsFifoT) == 0)
-			{
-				ptsFifoMsgT = CpFifoDataOutPtr(ptsFifoT);
-				memcpy(ptsCanMsgT, ptsFifoMsgT, sizeof(CpCanMsg_ts));
-				CpFifoIncOut(ptsFifoT);
-				ptsCanMsgT->ulMsgUser |= CP_BUFFER_PND;
-			}
-		}
-
-		// clear mailbox buffer 0
-		tx_mailbox_to_buffer[CAN_TXMAILBOX_0] = BUFFER_NONE;
+#if CP_STATISTIC > 0
+			err1_counter++;
+#endif		return;
 	}
 
-	if (__HAL_CAN_GET_FLAG(hcan, CAN_FLAG_RQCP1))
+	ptsCanMsgT = &atsCan1MsgS[canpie_buffer_number];
+
+	if (aptsCan1FifoS[canpie_buffer_number] == 0L)
 	{
-#if CP_DEBUG > 0
-		printf("1");
-#endif
-		canpie_buffer_number = tx_mailbox_to_buffer[CAN_TXMAILBOX_1];
-		//-----------------------------------------------------------------
-		// get pointer to CAN buffer
-		//
-		if (canpie_buffer_number == BUFFER_NONE)
+		if ((canpie_buffer_number != BUFFER_NONE) && (CPP_NULL != pfnTrmHandlerS))
 		{
-			goto clear_exit;
+			pfnTrmHandlerS(&atsCan1MsgS[canpie_buffer_number], canpie_buffer_number);
 		}
-
-		ptsCanMsgT = &atsCan1MsgS[canpie_buffer_number];
-
-		if (aptsCan1FifoS[canpie_buffer_number] == 0L)
+	}
+	else
+	{
+		ptsFifoT = aptsCan1FifoS[canpie_buffer_number];
+		if (CpFifoIsEmpty(ptsFifoT) == 0)
 		{
-			if ((canpie_buffer_number != BUFFER_NONE) && (CPP_NULL != pfnTrmHandlerS))
-			{
-				pfnTrmHandlerS(&atsCan1MsgS[canpie_buffer_number], canpie_buffer_number);
-			}
+			ptsFifoMsgT = CpFifoDataOutPtr(ptsFifoT);
+			memcpy(ptsCanMsgT, ptsFifoMsgT, sizeof(CpCanMsg_ts));
+			CpFifoIncOut(ptsFifoT);
+			ptsCanMsgT->ulMsgUser |= CP_BUFFER_PND;
 		}
-		else
-		{
-			ptsFifoT = aptsCan1FifoS[canpie_buffer_number];
-			if (CpFifoIsEmpty(ptsFifoT) == 0)
-			{
-				ptsFifoMsgT = CpFifoDataOutPtr(ptsFifoT);
-				memcpy(ptsCanMsgT, ptsFifoMsgT, sizeof(CpCanMsg_ts));
-				CpFifoIncOut(ptsFifoT);
-				ptsCanMsgT->ulMsgUser |= CP_BUFFER_PND;
-			}
-		}
-
-		// clear mailbox buffer 1
-		tx_mailbox_to_buffer[CAN_TXMAILBOX_1] = BUFFER_NONE;
 	}
 
-	if (__HAL_CAN_GET_FLAG(hcan, CAN_FLAG_RQCP2))
-	{
-#if CP_DEBUG > 0
-		printf("2");
-#endif
-		canpie_buffer_number = tx_mailbox_to_buffer[CAN_TXMAILBOX_2];
-		//-----------------------------------------------------------------
-		// get pointer to CAN buffer
-		//
-		if (canpie_buffer_number == BUFFER_NONE)
-		{
-			goto clear_exit;
-		}
-
-		ptsCanMsgT = &atsCan1MsgS[canpie_buffer_number];
-
-		if (aptsCan1FifoS[canpie_buffer_number] == 0L)
-		{
-			if ((canpie_buffer_number != BUFFER_NONE) && (CPP_NULL != pfnTrmHandlerS))
-			{
-				pfnTrmHandlerS(&atsCan1MsgS[canpie_buffer_number], canpie_buffer_number);
-			}
-		}
-		else
-		{
-			ptsFifoT = aptsCan1FifoS[canpie_buffer_number];
-			if (CpFifoIsEmpty(ptsFifoT) == 0)
-			{
-				ptsFifoMsgT = CpFifoDataOutPtr(ptsFifoT);
-				memcpy(ptsCanMsgT, ptsFifoMsgT, sizeof(CpCanMsg_ts));
-				CpFifoIncOut(ptsFifoT);
-				ptsCanMsgT->ulMsgUser |= CP_BUFFER_PND;
-			}
-		}
-
-		// clear mailbox buffer 2
-		tx_mailbox_to_buffer[CAN_TXMAILBOX_2] = BUFFER_NONE;
-	}
+	// clear mailbox buffer 0
+	tx_mailbox_to_buffer[TX_MAILBOX_0] = BUFFER_NONE;
 
 	//-----------------------------------------------------------------
 	// run through buffer list and test for open Tx requests
@@ -1661,35 +1364,155 @@ void HAL_CAN_TxCpltCallback(CAN_HandleTypeDef* hcan)
 #if CP_STATISTIC > 0
 	tx1_counter++;
 #endif
-
-clear_exit:
-	// Transmit mailbox empty Interrupt
-	__HAL_CAN_ENABLE_IT(hcan, CAN_IT_TME);
 }
 
-void HAL_CAN_RxCpltCallback(CAN_HandleTypeDef* hcan)
+void HAL_CAN_TxMailbox1CompleteCallback(CAN_HandleTypeDef* hcan)
+{
+	int8_t canpie_buffer_number;
+	CpFifo_ts *ptsFifoT;
+	CpCanMsg_ts *ptsFifoMsgT;
+	CpCanMsg_ts *ptsCanMsgT;
+
+	canpie_buffer_number = tx_mailbox_to_buffer[TX_MAILBOX_1];
+	//-----------------------------------------------------------------
+	// get pointer to CAN buffer
+	//
+	if (canpie_buffer_number == BUFFER_NONE)
+	{
+		printf("error should not happen");
+		return;
+	}
+
+	ptsCanMsgT = &atsCan1MsgS[canpie_buffer_number];
+
+	if (aptsCan1FifoS[canpie_buffer_number] == 0L)
+	{
+		if ((canpie_buffer_number != BUFFER_NONE) && (CPP_NULL != pfnTrmHandlerS))
+		{
+			pfnTrmHandlerS(&atsCan1MsgS[canpie_buffer_number], canpie_buffer_number);
+		}
+	}
+	else
+	{
+		ptsFifoT = aptsCan1FifoS[canpie_buffer_number];
+		if (CpFifoIsEmpty(ptsFifoT) == 0)
+		{
+			ptsFifoMsgT = CpFifoDataOutPtr(ptsFifoT);
+			memcpy(ptsCanMsgT, ptsFifoMsgT, sizeof(CpCanMsg_ts));
+			CpFifoIncOut(ptsFifoT);
+			ptsCanMsgT->ulMsgUser |= CP_BUFFER_PND;
+		}
+	}
+
+	// clear mailbox buffer 1
+	tx_mailbox_to_buffer[TX_MAILBOX_1] = BUFFER_NONE;
+
+	//-----------------------------------------------------------------
+	// run through buffer list and test for open Tx requests
+	//
+	ptsCanMsgT = &atsCan1MsgS[0];
+	for (canpie_buffer_number = 0; canpie_buffer_number < CP_BUFFER_MAX; canpie_buffer_number++)
+	{
+		if (((ptsCanMsgT->ulMsgUser) & CP_BUFFER_PND))
+		{
+			ptsCanMsgT->ulMsgUser &= ~CP_BUFFER_PND;
+			CpCoreBufferSend(aptsPortS[0], canpie_buffer_number);
+		}
+		ptsCanMsgT++;
+	}
+
+#if CP_STATISTIC > 0
+	tx1_counter++;
+#endif
+}
+
+void HAL_CAN_TxMailbox2CompleteCallback(CAN_HandleTypeDef* hcan)
+{
+	int8_t canpie_buffer_number;
+	CpFifo_ts *ptsFifoT;
+	CpCanMsg_ts *ptsFifoMsgT;
+	CpCanMsg_ts *ptsCanMsgT;
+
+	canpie_buffer_number = tx_mailbox_to_buffer[TX_MAILBOX_2];
+	//-----------------------------------------------------------------
+	// get pointer to CAN buffer
+	//
+	if (canpie_buffer_number == BUFFER_NONE)
+	{
+		printf("error should not happen");
+		return;
+	}
+
+	ptsCanMsgT = &atsCan1MsgS[canpie_buffer_number];
+
+	if (aptsCan1FifoS[canpie_buffer_number] == 0L)
+	{
+		if ((canpie_buffer_number != BUFFER_NONE) && (CPP_NULL != pfnTrmHandlerS))
+		{
+			pfnTrmHandlerS(&atsCan1MsgS[canpie_buffer_number], canpie_buffer_number);
+		}
+	}
+	else
+	{
+		ptsFifoT = aptsCan1FifoS[canpie_buffer_number];
+		if (CpFifoIsEmpty(ptsFifoT) == 0)
+		{
+			ptsFifoMsgT = CpFifoDataOutPtr(ptsFifoT);
+			memcpy(ptsCanMsgT, ptsFifoMsgT, sizeof(CpCanMsg_ts));
+			CpFifoIncOut(ptsFifoT);
+			ptsCanMsgT->ulMsgUser |= CP_BUFFER_PND;
+		}
+	}
+
+	// clear mailbox buffer 2
+	tx_mailbox_to_buffer[TX_MAILBOX_2] = BUFFER_NONE;
+
+	//-----------------------------------------------------------------
+	// run through buffer list and test for open Tx requests
+	//
+	ptsCanMsgT = &atsCan1MsgS[0];
+	for (canpie_buffer_number = 0; canpie_buffer_number < CP_BUFFER_MAX; canpie_buffer_number++)
+	{
+		if (((ptsCanMsgT->ulMsgUser) & CP_BUFFER_PND))
+		{
+			ptsCanMsgT->ulMsgUser &= ~CP_BUFFER_PND;
+			CpCoreBufferSend(aptsPortS[0], canpie_buffer_number);
+		}
+		ptsCanMsgT++;
+	}
+
+#if CP_STATISTIC > 0
+	tx1_counter++;
+#endif
+}
+
+void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef* hcan)
 {
 	CpCanMsg_ts *pcan_msg;
 	// get filter index
-	uint8_t filter_number = hcan->pRxMsg->FMI;
 	uint8_t canpie_buffer_number;
 	CpFifo_ts *ptsFifoT;
 	CpCanMsg_ts *ptsFifoMsgT;
 
-	canpie_buffer_number = filter_to_cp_buffer[filter_number];
+	CAN_RxHeaderTypeDef header;
+	uint8_t rx_data[8];
+
+	HAL_CAN_GetRxMessage(&HCAN1, CAN_RX_FIFO0, &header, rx_data);
+
+	canpie_buffer_number = filter_to_cp_buffer[header.FilterMatchIndex];
 
 	pcan_msg = &atsCan1MsgS[canpie_buffer_number];
 
-	if (hcan->pRxMsg->IDE == CAN_ID_STD)
+	if (header.IDE == CAN_ID_STD)
 	{
-		CpMsgSetStdId(pcan_msg, hcan->pRxMsg->StdId);
+		CpMsgSetStdId(pcan_msg, header.StdId);
 	}
 	else
 	{
-		CpMsgSetExtId(pcan_msg, hcan->pRxMsg->ExtId);
+		CpMsgSetExtId(pcan_msg, header.ExtId);
 	}
 
-	if (hcan->pRxMsg->RTR == CAN_RTR_REMOTE)
+	if (header.RTR == CAN_RTR_REMOTE)
 	{
 		CpMsgSetRemote(pcan_msg);
 	}
@@ -1698,16 +1521,16 @@ void HAL_CAN_RxCpltCallback(CAN_HandleTypeDef* hcan)
 		CpMsgClrRemote(pcan_msg);
 	}
 
-	CpMsgSetDlc(pcan_msg, hcan->pRxMsg->DLC);
+	CpMsgSetDlc(pcan_msg, header.DLC);
 
-	pcan_msg->tuMsgData.aubByte[0] = hcan->pRxMsg->Data[0];
-	pcan_msg->tuMsgData.aubByte[1] = hcan->pRxMsg->Data[1];
-	pcan_msg->tuMsgData.aubByte[2] = hcan->pRxMsg->Data[2];
-	pcan_msg->tuMsgData.aubByte[3] = hcan->pRxMsg->Data[3];
-	pcan_msg->tuMsgData.aubByte[4] = hcan->pRxMsg->Data[4];
-	pcan_msg->tuMsgData.aubByte[5] = hcan->pRxMsg->Data[5];
-	pcan_msg->tuMsgData.aubByte[6] = hcan->pRxMsg->Data[6];
-	pcan_msg->tuMsgData.aubByte[7] = hcan->pRxMsg->Data[7];
+	pcan_msg->tuMsgData.aubByte[0] = rx_data[0];
+	pcan_msg->tuMsgData.aubByte[1] = rx_data[1];
+	pcan_msg->tuMsgData.aubByte[2] = rx_data[2];
+	pcan_msg->tuMsgData.aubByte[3] = rx_data[3];
+	pcan_msg->tuMsgData.aubByte[4] = rx_data[4];
+	pcan_msg->tuMsgData.aubByte[5] = rx_data[5];
+	pcan_msg->tuMsgData.aubByte[6] = rx_data[6];
+	pcan_msg->tuMsgData.aubByte[7] = rx_data[7];
 
 	//pcan_msg->ulMsgUser = hcan->pRxMsg->FIFONumber;
 
@@ -1735,17 +1558,6 @@ void HAL_CAN_RxCpltCallback(CAN_HandleTypeDef* hcan)
 #if CP_STATISTIC > 0
 	rx1_counter++;
 #endif
-
-#if 1
-	HAL_CAN_Receive_IT(hcan, hcan->pRxMsg->FIFONumber);
-#else
-	// FIFO 0 message pending Interrupt
-	__HAL_CAN_ENABLE_IT(hcan, CAN_IT_FMP0);
-	//__HAL_CAN_ENABLE_IT(hcan, CAN_IT_FOV0 | CAN_IT_FMP0);
-
-	// FIFO 1 message pending Interrupt
-	__HAL_CAN_ENABLE_IT(hcan, CAN_IT_FMP1);
-#endif
 }
 
 /**
@@ -1760,7 +1572,7 @@ void HAL_CAN_ErrorCallback(CAN_HandleTypeDef *hcan)
 	err1_counter++;
 #endif
 	/* Enable Error warning, Error passive, Bus-off, Last error and Error Interrupts and FIFO0, FIFO1 */
-	__HAL_CAN_ENABLE_IT(hcan, CAN_IT_EWG | CAN_IT_EPV | CAN_IT_BOF | CAN_IT_LEC | CAN_IT_ERR | CAN_IT_TME | CAN_IT_FOV0 | CAN_IT_FMP0 | CAN_IT_FOV1 | CAN_IT_FMP1);
+	__HAL_CAN_ENABLE_IT(hcan, CAN_IT_ERROR_WARNING | CAN_IT_ERROR_PASSIVE | CAN_IT_BUSOFF | CAN_IT_LAST_ERROR_CODE | CAN_IT_ERROR | CAN_IT_TX_MAILBOX_EMPTY | CAN_IT_RX_FIFO0_OVERRUN | CAN_IT_RX_FIFO0_MSG_PENDING| CAN_IT_RX_FIFO1_OVERRUN | CAN_IT_RX_FIFO1_MSG_PENDING);
 
 	if (CPP_NULL != pfnErrHandlerS)
 	{
