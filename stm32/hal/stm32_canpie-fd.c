@@ -828,8 +828,11 @@ CpStatus_tv CpCoreDriverInit(uint8_t ubPhyIfV, CpPort_ts * ptsPortV, uint8_t ubC
 				}
 
 				HCAN1.Instance = CAN1;
+//				HCAN1.Init.Prescaler = 16;
 				HCAN1.Init.Mode = CAN_MODE_NORMAL;
-
+//				HCAN1.Init.SyncJumpWidth = CAN_SJW_1TQ;
+//				HCAN1.Init.TimeSeg1 = CAN_BS1_1TQ;
+//				HCAN1.Init.TimeSeg2 = CAN_BS2_1TQ;
 				HCAN1.Init.TimeTriggeredMode = DISABLE;
 				HCAN1.Init.AutoBusOff = DISABLE;
 				HCAN1.Init.AutoWakeUp = DISABLE;
@@ -847,10 +850,10 @@ CpStatus_tv CpCoreDriverInit(uint8_t ubPhyIfV, CpPort_ts * ptsPortV, uint8_t ubC
 					return (eCP_ERR_INIT_FAIL);
 				}
 
-				if (HAL_CAN_Start(&HCAN1) != HAL_OK)
-				{
-					return (eCP_ERR_INIT_FAIL);
-				}
+//				if (HAL_CAN_Start(&HCAN1) != HAL_OK)
+//				{
+//					return (eCP_ERR_INIT_FAIL);
+//				}
 
 				tvStatusT = eCP_ERR_NONE;
 			}
@@ -1320,7 +1323,8 @@ void HAL_CAN_TxMailbox0CompleteCallback(CAN_HandleTypeDef* hcan)
 	{
 #if CP_STATISTIC > 0
 			err1_counter++;
-#endif		return;
+		return;
+#endif
 	}
 
 	ptsCanMsgT = &atsCan1MsgS[canpie_buffer_number];
@@ -1497,7 +1501,7 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef* hcan)
 	CAN_RxHeaderTypeDef header;
 	uint8_t rx_data[8];
 
-	HAL_CAN_GetRxMessage(&HCAN1, CAN_RX_FIFO0, &header, rx_data);
+	HAL_CAN_GetRxMessage(hcan, CAN_RX_FIFO0, &header, rx_data);
 
 	canpie_buffer_number = filter_to_cp_buffer[header.FilterMatchIndex];
 
