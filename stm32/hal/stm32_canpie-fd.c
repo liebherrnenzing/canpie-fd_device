@@ -1383,7 +1383,7 @@ void HAL_CAN_TxMailbox1CompleteCallback(CAN_HandleTypeDef* hcan)
 	//
 	if (canpie_buffer_number == BUFFER_NONE)
 	{
-		printf("error should not happen");
+		//printf("error should not happen");
 		return;
 	}
 
@@ -1443,7 +1443,7 @@ void HAL_CAN_TxMailbox2CompleteCallback(CAN_HandleTypeDef* hcan)
 	//
 	if (canpie_buffer_number == BUFFER_NONE)
 	{
-		printf("error should not happen");
+		//printf("error should not happen");
 		return;
 	}
 
