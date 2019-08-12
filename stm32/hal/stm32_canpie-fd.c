@@ -640,14 +640,19 @@ CpStatus_tv CpCoreCanMode(CpPort_ts * ptsPortV, uint8_t ubModeV)
 				//
 				case eCP_MODE_STOP:
 					hal_status = HAL_CAN_Stop(&HCAN1);
+					HAL_CAN_ResetError(&HCAN1);
 					hal_status1 = HAL_CAN_DeactivateNotification(&HCAN1, CAN_IT_TX_MAILBOX_EMPTY | CAN_IT_RX_FIFO0_MSG_PENDING |  CAN_IT_RX_FIFO1_MSG_PENDING | CAN_IT_ERROR_WARNING | CAN_IT_ERROR_PASSIVE | CAN_IT_BUSOFF | CAN_IT_LAST_ERROR_CODE | CAN_IT_ERROR);
 					break;
 
 					//--------------------------------------------------------
 					// Start the CAN controller (active on the bus)
 					//
-				case eCP_MODE_START:
-					hal_status = HAL_CAN_ActivateNotification(&HCAN1, CAN_IT_RX_FIFO0_MSG_PENDING | CAN_IT_RX_FIFO1_MSG_PENDING | CAN_IT_TX_MAILBOX_EMPTY);
+				case eCP_MODE_OPERATION:
+					HCAN1.Init.Mode = CAN_MODE_NORMAL;
+					HAL_CAN_ResetError(&HCAN1);
+					/* Clear Last error code Flag */
+					CLEAR_BIT(HCAN1.Instance->ESR, CAN_ESR_LEC);
+					hal_status = HAL_CAN_ActivateNotification(&HCAN1, CAN_IT_RX_FIFO0_MSG_PENDING | CAN_IT_RX_FIFO1_MSG_PENDING | CAN_IT_TX_MAILBOX_EMPTY | CAN_IT_ERROR_WARNING | CAN_IT_ERROR_PASSIVE | CAN_IT_BUSOFF | CAN_IT_LAST_ERROR_CODE | CAN_IT_ERROR);
 					hal_status1 = HAL_CAN_Start(&HCAN1);
 					break;
 
@@ -656,7 +661,10 @@ CpStatus_tv CpCoreCanMode(CpPort_ts * ptsPortV, uint8_t ubModeV)
 					//
 				case eCP_MODE_LISTEN_ONLY:
 					HCAN1.Init.Mode = CAN_MODE_SILENT;
-					hal_status = HAL_CAN_ActivateNotification(&HCAN1, CAN_IT_RX_FIFO0_MSG_PENDING | CAN_IT_RX_FIFO1_MSG_PENDING | CAN_IT_TX_MAILBOX_EMPTY);
+					HAL_CAN_ResetError(&HCAN1);
+					/* Clear Last error code Flag */
+					CLEAR_BIT(HCAN1.Instance->ESR, CAN_ESR_LEC);
+					hal_status = HAL_CAN_ActivateNotification(&HCAN1, CAN_IT_RX_FIFO0_MSG_PENDING | CAN_IT_RX_FIFO1_MSG_PENDING | CAN_IT_TX_MAILBOX_EMPTY | CAN_IT_ERROR_WARNING | CAN_IT_ERROR_PASSIVE | CAN_IT_BUSOFF | CAN_IT_LAST_ERROR_CODE | CAN_IT_ERROR);
 					hal_status1 = HAL_CAN_Init(&HCAN1);
 					hal_status2 = HAL_CAN_Start(&HCAN1);
 
