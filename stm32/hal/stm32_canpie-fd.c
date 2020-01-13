@@ -14,6 +14,10 @@
 #include "printf.h"
 #endif
 
+#ifndef CP_RETRANSMIT_WHEN_BUSY
+#define CP_RETRANSMIT_WHEN_BUSY  0
+#endif
+
 // Definitions
 #define HAL_CAN_TIMEOUT_VALUE  10U
 #define MAX_CAN_FILTER_NUMBER	14
@@ -517,7 +521,9 @@ CpStatus_tv CpCoreBufferSend(CpPort_ts * ptsPortV, uint8_t ubBufferIdxV)
 			// the transmission will be done in the CAN Tx
 			// interrupt
 			//
+#if CP_RETRANSMIT_WHEN_BUSY > 0
 			atsCan1MsgS[ubBufferIdxV].ulMsgUser |= CP_BUFFER_PND;
+#endif
 			return eCP_ERR_TRM_FULL;
 		}
 		else
