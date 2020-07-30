@@ -901,7 +901,7 @@ CpStatus_tv CpCoreDriverInit(uint8_t ubPhyIfV, CpPort_ts * ptsPortV, uint8_t ubC
 				HCAN1.Init.TimeTriggeredMode = DISABLE;
 				HCAN1.Init.AutoBusOff = DISABLE;
 				HCAN1.Init.AutoWakeUp = DISABLE;
-				HCAN1.Init.AutoRetransmission = DISABLE;
+				HCAN1.Init.AutoRetransmission = ENABLE;
 				HCAN1.Init.ReceiveFifoLocked = DISABLE;
 				HCAN1.Init.TransmitFifoPriority = DISABLE;
 
