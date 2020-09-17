@@ -1094,14 +1094,14 @@ CpStatus_tv CpCoreFifoWrite(CpPort_ts * ptsPortV, uint8_t ubBufferIdxV, CpCanMsg
 	//
 	tvStatusT = CheckParam(ptsPortV, ubBufferIdxV, eDRV_INFO_INIT);
 
-	// check if buffer is at least valid
-	if ((atsCan1MsgS[ubBufferIdxV].ulMsgUser & (CP_BUFFER_VAL)) != (CP_BUFFER_VAL))
-	{
-		return eCP_ERR_BUFFER;
-	}
-
 	if (tvStatusT == eCP_ERR_NONE)
 	{
+		// check if buffer is valid
+		if ((atsCan1MsgS[ubBufferIdxV].ulMsgUser & CP_BUFFER_VAL) != (CP_BUFFER_VAL))
+		{
+			return eCP_ERR_BUFFER;
+		}
+
 		if (pulBufferSizeV != (uint32_t *) 0L)
 		{
 			if (ptsCanMsgV != (CpCanMsg_ts *) 0L)
