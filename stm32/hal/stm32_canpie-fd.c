@@ -659,7 +659,8 @@ CpStatus_tv CpCoreCanMode(CpPort_ts * ptsPortV, uint8_t ubModeV)
 					/* Clear Last error code Flag */
 					CLEAR_BIT(HCAN1.Instance->ESR, CAN_ESR_LEC);
 					hal_status = HAL_CAN_ActivateNotification(&HCAN1, CAN_IT_RX_FIFO0_MSG_PENDING | CAN_IT_RX_FIFO1_MSG_PENDING | CAN_IT_TX_MAILBOX_EMPTY | CAN_IT_ERROR_WARNING | CAN_IT_ERROR_PASSIVE | CAN_IT_BUSOFF | CAN_IT_LAST_ERROR_CODE | CAN_IT_ERROR);
-					hal_status1 = HAL_CAN_Start(&HCAN1);
+					hal_status1 = HAL_CAN_Init(&HCAN1);
+					hal_status2 = HAL_CAN_Start(&HCAN1);
 					break;
 
 					//--------------------------------------------------------
@@ -771,6 +772,56 @@ CpStatus_tv CpCoreCanState(CpPort_ts * ptsPortV, CpState_ts * ptsStateV)
 			{
 				ptsStateV->ubCanErrType = eCP_ERR_TYPE_CRC;
 			}
+			
+#if 0
+			if (hal_esr & CAN_ESR_EWGF)
+			{
+				ptsStateV->ubCanErrState = eCP_STATE_BUS_WARN;
+			}
+
+			if (hal_esr & CAN_ESR_EPVF)
+			{
+				ptsStateV->ubCanErrState = eCP_STATE_BUS_PASSIVE;
+			}
+
+			if (hal_esr & CAN_ESR_BOFF)
+			{
+				ptsStateV->ubCanErrState = eCP_STATE_BUS_OFF;
+			}
+
+			// now set the errors first start with error none
+			ptsStateV->ubCanErrType = eCP_ERR_TYPE_NONE;
+
+			switch (hal_esr & CAN_ESR_LEC)
+			{
+				case (CAN_ESR_LEC_0):
+					/* stuff error */
+					ptsStateV->ubCanErrType = eCP_ERR_TYPE_STUFF;
+					break;
+				case (CAN_ESR_LEC_1):
+					/* form error */
+					ptsStateV->ubCanErrType = eCP_ERR_TYPE_FORM;
+					break;
+				case (CAN_ESR_LEC_1 | CAN_ESR_LEC_0):
+					/* acknowledgment error */
+					ptsStateV->ubCanErrType = eCP_ERR_TYPE_ACK;
+					break;
+				case (CAN_ESR_LEC_2):
+					/* bit recessive error */
+					ptsStateV->ubCanErrType = eCP_ERR_TYPE_BIT0;
+					break;
+				case (CAN_ESR_LEC_2 | CAN_ESR_LEC_0):
+					/* Set CAN error code to BD error */
+					ptsStateV->ubCanErrType = eCP_ERR_TYPE_BIT1;
+					break;
+				case (CAN_ESR_LEC_2 | CAN_ESR_LEC_1):
+					/* Set CAN error code to CRC error */
+					ptsStateV->ubCanErrType = eCP_ERR_TYPE_CRC;
+					break;
+				default:
+					break;
+			}
+#endif
 
 			//----------------------------------------------------------------
 			// get current error counter
@@ -1043,14 +1094,14 @@ CpStatus_tv CpCoreFifoWrite(CpPort_ts * ptsPortV, uint8_t ubBufferIdxV, CpCanMsg
 	//
 	tvStatusT = CheckParam(ptsPortV, ubBufferIdxV, eDRV_INFO_INIT);
 
-	// check if buffer is at least valid
-	if ((atsCan1MsgS[ubBufferIdxV].ulMsgUser & (CP_BUFFER_VAL)) != (CP_BUFFER_VAL))
-	{
-		return eCP_ERR_BUFFER;
-	}
-
 	if (tvStatusT == eCP_ERR_NONE)
 	{
+		// check if buffer is valid
+		if ((atsCan1MsgS[ubBufferIdxV].ulMsgUser & CP_BUFFER_VAL) != (CP_BUFFER_VAL))
+		{
+			return eCP_ERR_BUFFER;
+		}
+
 		if (pulBufferSizeV != (uint32_t *) 0L)
 		{
 			if (ptsCanMsgV != (CpCanMsg_ts *) 0L)
@@ -1229,9 +1280,9 @@ static HAL_StatusTypeDef can_filter_config(uint32_t ulIdentifierV, uint32_t ulAc
 	else //  if((ubFormatV & CP_MSG_FORMAT_MASK) == CP_MSG_FORMAT_CEFF)
 	{
 		filter_config.FilterIdHigh = ulIdentifierV >> 13; // EXTID[28:13]
-		filter_config.FilterIdLow = (0x00FF & (ulIdentifierV << 3)) | (1 << 2); // EXTID[12:0]
+		filter_config.FilterIdLow = (0xFFFF & (ulIdentifierV << 3)) | (1 << 2); // EXTID[12:0] + IDE
 		filter_config.FilterMaskIdHigh = ulAcceptMaskV >> 13;
-		filter_config.FilterMaskIdLow = (0x00FF & (ulAcceptMaskV << 3)) | (1 << 2);
+		filter_config.FilterMaskIdLow = (0xFFFF & (ulAcceptMaskV << 3)) | (1 << 2);
 	}
 
 	filter_config.FilterFIFOAssignment = fifo;
