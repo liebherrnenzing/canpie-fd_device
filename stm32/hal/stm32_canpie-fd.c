@@ -1280,9 +1280,9 @@ static HAL_StatusTypeDef can_filter_config(uint32_t ulIdentifierV, uint32_t ulAc
 	else //  if((ubFormatV & CP_MSG_FORMAT_MASK) == CP_MSG_FORMAT_CEFF)
 	{
 		filter_config.FilterIdHigh = ulIdentifierV >> 13; // EXTID[28:13]
-		filter_config.FilterIdLow = (0x00FF & (ulIdentifierV << 3)) | (1 << 2); // EXTID[12:0]
+		filter_config.FilterIdLow = (0xFFFF & (ulIdentifierV << 3)) | (1 << 2); // EXTID[12:0] + IDE
 		filter_config.FilterMaskIdHigh = ulAcceptMaskV >> 13;
-		filter_config.FilterMaskIdLow = (0x00FF & (ulAcceptMaskV << 3)) | (1 << 2);
+		filter_config.FilterMaskIdLow = (0xFFFF & (ulAcceptMaskV << 3)) | (1 << 2);
 	}
 
 	filter_config.FilterFIFOAssignment = fifo;
