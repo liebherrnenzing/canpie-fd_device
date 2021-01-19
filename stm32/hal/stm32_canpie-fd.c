@@ -1274,8 +1274,8 @@ static HAL_StatusTypeDef can_filter_config(uint32_t ulIdentifierV, uint32_t ulAc
 	{
 		filter_config.FilterIdHigh = ulIdentifierV << 5;
 		filter_config.FilterIdLow = 0x0;
-		filter_config.FilterMaskIdHigh = ulAcceptMaskV << 5;
-		filter_config.FilterMaskIdLow = 0x0; // allows both remote and data frames
+		filter_config.FilterMaskIdHigh = ulAcceptMaskV << 5 | (0x1F);
+		filter_config.FilterMaskIdLow = 0xFFF8; // low 3bits ignore
 	}
 	else //  if((ubFormatV & CP_MSG_FORMAT_MASK) == CP_MSG_FORMAT_CEFF)
 	{
