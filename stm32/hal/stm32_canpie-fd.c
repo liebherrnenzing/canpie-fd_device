@@ -15,7 +15,7 @@
 #endif
 
 #ifndef CP_RETRANSMIT_WHEN_BUSY
-#define CP_RETRANSMIT_WHEN_BUSY  0
+#define CP_RETRANSMIT_WHEN_BUSY  1
 #endif
 
 // Definitions
@@ -1096,12 +1096,6 @@ CpStatus_tv CpCoreFifoWrite(CpPort_ts * ptsPortV, uint8_t ubBufferIdxV, CpCanMsg
 
 	if (tvStatusT == eCP_ERR_NONE)
 	{
-		// check if buffer is valid
-		if ((atsCan1MsgS[ubBufferIdxV].ulMsgUser & CP_BUFFER_VAL) != (CP_BUFFER_VAL))
-		{
-			return eCP_ERR_BUFFER;
-		}
-
 		if (pulBufferSizeV != (uint32_t *) 0L)
 		{
 			if (ptsCanMsgV != (CpCanMsg_ts *) 0L)
@@ -1403,13 +1397,16 @@ void HAL_CAN_TxMailbox0CompleteCallback(CAN_HandleTypeDef* hcan)
 	}
 	else
 	{
-		ptsFifoT = aptsCan1FifoS[canpie_buffer_number];
-		if (CpFifoIsEmpty(ptsFifoT) == 0)
+		if( 0x0 == ((ptsCanMsgT->ulMsgUser) & CP_BUFFER_PND) )
 		{
-			ptsFifoMsgT = CpFifoDataOutPtr(ptsFifoT);
-			memcpy(ptsCanMsgT, ptsFifoMsgT, sizeof(CpCanMsg_ts));
-			CpFifoIncOut(ptsFifoT);
-			ptsCanMsgT->ulMsgUser |= CP_BUFFER_PND;
+			ptsFifoT = aptsCan1FifoS[canpie_buffer_number];
+			if (CpFifoIsEmpty(ptsFifoT) == 0)
+			{
+				ptsFifoMsgT = CpFifoDataOutPtr(ptsFifoT);
+				memcpy(ptsCanMsgT, ptsFifoMsgT, sizeof(CpCanMsg_ts));
+				CpFifoIncOut(ptsFifoT);
+				ptsCanMsgT->ulMsgUser |= CP_BUFFER_PND;
+			}
 		}
 	}
 
@@ -1426,6 +1423,7 @@ void HAL_CAN_TxMailbox0CompleteCallback(CAN_HandleTypeDef* hcan)
 		{
 			ptsCanMsgT->ulMsgUser &= ~CP_BUFFER_PND;
 			CpCoreBufferSend(aptsPortS[0], canpie_buffer_number);
+			break;
 		}
 		ptsCanMsgT++;
 	}
@@ -1463,13 +1461,16 @@ void HAL_CAN_TxMailbox1CompleteCallback(CAN_HandleTypeDef* hcan)
 	}
 	else
 	{
-		ptsFifoT = aptsCan1FifoS[canpie_buffer_number];
-		if (CpFifoIsEmpty(ptsFifoT) == 0)
+		if (0x0 == ((ptsCanMsgT->ulMsgUser) & CP_BUFFER_PND))
 		{
-			ptsFifoMsgT = CpFifoDataOutPtr(ptsFifoT);
-			memcpy(ptsCanMsgT, ptsFifoMsgT, sizeof(CpCanMsg_ts));
-			CpFifoIncOut(ptsFifoT);
-			ptsCanMsgT->ulMsgUser |= CP_BUFFER_PND;
+			ptsFifoT = aptsCan1FifoS[canpie_buffer_number];
+			if (CpFifoIsEmpty(ptsFifoT) == 0)
+			{
+				ptsFifoMsgT = CpFifoDataOutPtr(ptsFifoT);
+				memcpy(ptsCanMsgT, ptsFifoMsgT, sizeof(CpCanMsg_ts));
+				CpFifoIncOut(ptsFifoT);
+				ptsCanMsgT->ulMsgUser |= CP_BUFFER_PND;
+			}
 		}
 	}
 
@@ -1486,6 +1487,7 @@ void HAL_CAN_TxMailbox1CompleteCallback(CAN_HandleTypeDef* hcan)
 		{
 			ptsCanMsgT->ulMsgUser &= ~CP_BUFFER_PND;
 			CpCoreBufferSend(aptsPortS[0], canpie_buffer_number);
+			break;
 		}
 		ptsCanMsgT++;
 	}
@@ -1523,13 +1525,16 @@ void HAL_CAN_TxMailbox2CompleteCallback(CAN_HandleTypeDef* hcan)
 	}
 	else
 	{
-		ptsFifoT = aptsCan1FifoS[canpie_buffer_number];
-		if (CpFifoIsEmpty(ptsFifoT) == 0)
+		if (0x0 == ((ptsCanMsgT->ulMsgUser) & CP_BUFFER_PND))
 		{
-			ptsFifoMsgT = CpFifoDataOutPtr(ptsFifoT);
-			memcpy(ptsCanMsgT, ptsFifoMsgT, sizeof(CpCanMsg_ts));
-			CpFifoIncOut(ptsFifoT);
-			ptsCanMsgT->ulMsgUser |= CP_BUFFER_PND;
+			ptsFifoT = aptsCan1FifoS[canpie_buffer_number];
+			if (CpFifoIsEmpty(ptsFifoT) == 0)
+			{
+				ptsFifoMsgT = CpFifoDataOutPtr(ptsFifoT);
+				memcpy(ptsCanMsgT, ptsFifoMsgT, sizeof(CpCanMsg_ts));
+				CpFifoIncOut(ptsFifoT);
+				ptsCanMsgT->ulMsgUser |= CP_BUFFER_PND;
+			}
 		}
 	}
 
@@ -1546,6 +1551,7 @@ void HAL_CAN_TxMailbox2CompleteCallback(CAN_HandleTypeDef* hcan)
 		{
 			ptsCanMsgT->ulMsgUser &= ~CP_BUFFER_PND;
 			CpCoreBufferSend(aptsPortS[0], canpie_buffer_number);
+			break;
 		}
 		ptsCanMsgT++;
 	}
