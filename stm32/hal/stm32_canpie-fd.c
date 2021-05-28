@@ -635,8 +635,8 @@ CpStatus_tv CpCoreCanMode(CpPort_ts * ptsPortV, uint8_t ubModeV)
 				// Stop the CAN controller (passive on the bus)
 				//
 				case eCP_MODE_STOP:
-					hal_status = HAL_CAN_Stop(&HCAN1);
-					HAL_CAN_ResetError(&HCAN1);
+					HAL_CAN_Stop(&HCAN1);
+					hal_status = HAL_CAN_ResetError(&HCAN1);
 					hal_status1 = HAL_CAN_DeactivateNotification(&HCAN1, CAN_IT_TX_MAILBOX_EMPTY | CAN_IT_RX_FIFO0_MSG_PENDING |  CAN_IT_RX_FIFO1_MSG_PENDING | CAN_IT_ERROR_WARNING | CAN_IT_ERROR_PASSIVE | CAN_IT_BUSOFF | CAN_IT_LAST_ERROR_CODE | CAN_IT_ERROR);
 					break;
 
