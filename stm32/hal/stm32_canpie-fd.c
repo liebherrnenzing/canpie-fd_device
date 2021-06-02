@@ -15,7 +15,7 @@
 #endif
 
 #ifndef CP_RETRANSMIT_WHEN_BUSY
-#define CP_RETRANSMIT_WHEN_BUSY  0
+#define CP_RETRANSMIT_WHEN_BUSY  1
 #endif
 
 // Definitions
@@ -150,6 +150,7 @@ static HAL_StatusTypeDef can_filter_config(uint32_t ulIdentifierV, uint32_t ulAc
 static CpStatus_tv can_filter_init(uint8_t ubBufferIdxV, uint32_t ulIdentifierV, uint32_t ulAcceptMaskV, uint8_t ubFormatV);
 
 static CpStatus_tv search_for_already_defined_filter(uint8_t ubBufferIdxV, uint8_t *filter_number);
+static CpStatus_tv add_message_to_fifo(CpFifo_ts * ptsFifoT, CpCanMsg_ts * ptsCanMsgV, uint32_t * pulBufferSizeV);
 
 /*----------------------------------------------------------------------------*\
 ** Function implementation                                                    **
@@ -477,12 +478,6 @@ CpStatus_tv CpCoreBufferSend(CpPort_ts * ptsPortV, uint8_t ubBufferIdxV)
 	//
 	tvStatusT = CheckParam(ptsPortV, ubBufferIdxV, eDRV_INFO_INIT);
 
-//	// check if buffer is used for tx and valid
-//	if((atsCan1MsgS[ubBufferIdxV].ulMsgUser & (CP_BUFFER_VAL | CP_BUFFER_TRM)) != (CP_BUFFER_VAL | CP_BUFFER_TRM))
-//	{
-//		return eCP_ERR_BUFFER;
-//	}
-
 	if (tvStatusT == eCP_ERR_NONE)
 	{
 		//-----------------------------------------------------------------
@@ -516,11 +511,6 @@ CpStatus_tv CpCoreBufferSend(CpPort_ts * ptsPortV, uint8_t ubBufferIdxV)
 
 		if (HAL_CAN_AddTxMessage(&HCAN1, &tx_header, &atsCan1MsgS[ubBufferIdxV].tuMsgData.aubByte[0], &tx_mailbox) != HAL_OK)
 		{
-			//---------------------------------------------------
-			// mark this buffer for transmission,
-			// the transmission will be done in the CAN Tx
-			// interrupt
-			//
 #if CP_RETRANSMIT_WHEN_BUSY > 0
 			atsCan1MsgS[ubBufferIdxV].ulMsgUser |= CP_BUFFER_PND;
 #endif
@@ -645,8 +635,8 @@ CpStatus_tv CpCoreCanMode(CpPort_ts * ptsPortV, uint8_t ubModeV)
 				// Stop the CAN controller (passive on the bus)
 				//
 				case eCP_MODE_STOP:
-					hal_status = HAL_CAN_Stop(&HCAN1);
-					HAL_CAN_ResetError(&HCAN1);
+					HAL_CAN_Stop(&HCAN1);
+					hal_status = HAL_CAN_ResetError(&HCAN1);
 					hal_status1 = HAL_CAN_DeactivateNotification(&HCAN1, CAN_IT_TX_MAILBOX_EMPTY | CAN_IT_RX_FIFO0_MSG_PENDING |  CAN_IT_RX_FIFO1_MSG_PENDING | CAN_IT_ERROR_WARNING | CAN_IT_ERROR_PASSIVE | CAN_IT_BUSOFF | CAN_IT_LAST_ERROR_CODE | CAN_IT_ERROR);
 					break;
 
@@ -1086,7 +1076,6 @@ CpStatus_tv CpCoreFifoRelease(CpPort_ts * ptsPortV, uint8_t ubBufferIdxV)
 CpStatus_tv CpCoreFifoWrite(CpPort_ts * ptsPortV, uint8_t ubBufferIdxV, CpCanMsg_ts * ptsCanMsgV, uint32_t * pulBufferSizeV)
 {
 	CpFifo_ts * ptsFifoT;
-	CpCanMsg_ts * ptsCanMsgT;
 	CpStatus_tv tvStatusT;
 
 	//----------------------------------------------------------------
@@ -1096,12 +1085,6 @@ CpStatus_tv CpCoreFifoWrite(CpPort_ts * ptsPortV, uint8_t ubBufferIdxV, CpCanMsg
 
 	if (tvStatusT == eCP_ERR_NONE)
 	{
-		// check if buffer is valid
-		if ((atsCan1MsgS[ubBufferIdxV].ulMsgUser & CP_BUFFER_VAL) != (CP_BUFFER_VAL))
-		{
-			return eCP_ERR_BUFFER;
-		}
-
 		if (pulBufferSizeV != (uint32_t *) 0L)
 		{
 			if (ptsCanMsgV != (CpCanMsg_ts *) 0L)
@@ -1121,29 +1104,18 @@ CpStatus_tv CpCoreFifoWrite(CpPort_ts * ptsPortV, uint8_t ubBufferIdxV, CpCanMsg
 				//
 				if ((atsCan1MsgS[ubBufferIdxV].ulMsgUser & CP_BUFFER_PND) > 0)
 				{
-
-					if (CpFifoIsFull(ptsFifoT) == 1)
-					{
-						//--------------------------------------------------------
-						// FIFO is empty, no data has been copied
-						//
-						*pulBufferSizeV = 0;
-						tvStatusT = eCP_ERR_FIFO_FULL;
-					}
-					else
-					{
-						ptsCanMsgT = CpFifoDataInPtr(ptsFifoT);
-						memcpy(ptsCanMsgT, ptsCanMsgV, sizeof(CpCanMsg_ts));
-						CpFifoIncIn(ptsFifoT);
-						*pulBufferSizeV = 1;
-						tvStatusT = eCP_ERR_NONE;
-					}
+					tvStatusT = add_message_to_fifo(ptsFifoT, ptsCanMsgV, pulBufferSizeV);
 				}
 				else
 				{
+					/* Try to send it directly */
 					memcpy(&atsCan1MsgS[ubBufferIdxV], ptsCanMsgV, sizeof(CpCanMsg_ts));
-					CpCoreBufferSend(ptsPortV, ubBufferIdxV);
-					tvStatusT = eCP_ERR_NONE;
+					tvStatusT = CpCoreBufferSend(ptsPortV, ubBufferIdxV);
+
+					if (eCP_ERR_TRM_FULL == tvStatusT)
+					{
+						tvStatusT = add_message_to_fifo(ptsFifoT, ptsCanMsgV, pulBufferSizeV);
+					}
 				}
 			}
 		}
@@ -1293,6 +1265,32 @@ static HAL_StatusTypeDef can_filter_config(uint32_t ulIdentifierV, uint32_t ulAc
 }
 
 /**
+ * @param ptsFifoT
+ * @param ptsCanMsgV
+ * @param pulBufferSizeV
+ * @retval HAL status
+ */
+static CpStatus_tv add_message_to_fifo(CpFifo_ts * ptsFifoT, CpCanMsg_ts * ptsCanMsgV, uint32_t * pulBufferSizeV)
+{
+	CpCanMsg_ts * ptsCanMsgT;
+	CpStatus_tv tvStatusT;
+
+	*pulBufferSizeV = 0;
+	tvStatusT = eCP_ERR_FIFO_FULL;
+
+	if (CpFifoIsFull(ptsFifoT) == 0)
+	{
+		ptsCanMsgT = CpFifoDataInPtr(ptsFifoT);
+		memcpy(ptsCanMsgT, ptsCanMsgV, sizeof(CpCanMsg_ts));
+		CpFifoIncIn(ptsFifoT);
+		*pulBufferSizeV = 1;
+		tvStatusT = eCP_ERR_NONE;
+	}
+	return tvStatusT;
+}
+
+
+/**
  * @param filter_number
  * @return Error code is defined by the #CpErr_e enumeration. If no error occurred, the function will return the value \c #eCP_ERR_NONE.
  */
@@ -1426,6 +1424,7 @@ void HAL_CAN_TxMailbox0CompleteCallback(CAN_HandleTypeDef* hcan)
 		{
 			ptsCanMsgT->ulMsgUser &= ~CP_BUFFER_PND;
 			CpCoreBufferSend(aptsPortS[0], canpie_buffer_number);
+			break;
 		}
 		ptsCanMsgT++;
 	}
@@ -1486,6 +1485,7 @@ void HAL_CAN_TxMailbox1CompleteCallback(CAN_HandleTypeDef* hcan)
 		{
 			ptsCanMsgT->ulMsgUser &= ~CP_BUFFER_PND;
 			CpCoreBufferSend(aptsPortS[0], canpie_buffer_number);
+			break;
 		}
 		ptsCanMsgT++;
 	}
@@ -1546,6 +1546,7 @@ void HAL_CAN_TxMailbox2CompleteCallback(CAN_HandleTypeDef* hcan)
 		{
 			ptsCanMsgT->ulMsgUser &= ~CP_BUFFER_PND;
 			CpCoreBufferSend(aptsPortS[0], canpie_buffer_number);
+			break;
 		}
 		ptsCanMsgT++;
 	}
