@@ -1211,9 +1211,9 @@ CpStatus_tv CpCoreStatistic(CpPort_ts * ptsPortV, CpStatistic_ts * ptsStatsV)
 		{
 			tvStatusT = eCP_ERR_NONE;
 #if CP_STATISTIC > 0
-			ptsStatsV->ulErrMsgCount = tx1_counter;
+			ptsStatsV->ulErrMsgCount = err1_counter;
 			ptsStatsV->ulRcvMsgCount = rx1_counter;
-			ptsStatsV->ulTrmMsgCount = err1_counter;
+			ptsStatsV->ulTrmMsgCount = tx1_counter;
 #else
 			ptsStatsV->ulErrMsgCount = 0;
 			ptsStatsV->ulRcvMsgCount = 0;
@@ -1567,62 +1567,70 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef* hcan)
 	CAN_RxHeaderTypeDef header;
 	uint8_t rx_data[8];
 
-	HAL_CAN_GetRxMessage(hcan, CAN_RX_FIFO0, &header, rx_data);
-
-	canpie_buffer_number = filter_to_cp_buffer[header.FilterMatchIndex];
-
-	pcan_msg = &atsCan1MsgS[canpie_buffer_number];
-
-	if (header.IDE == CAN_ID_STD)
+	if (HAL_OK == HAL_CAN_GetRxMessage(hcan, CAN_RX_FIFO0, &header, rx_data))
 	{
-		CpMsgSetStdId(pcan_msg, header.StdId);
-	}
-	else
-	{
-		CpMsgSetExtId(pcan_msg, header.ExtId);
-	}
+		canpie_buffer_number = filter_to_cp_buffer[header.FilterMatchIndex];
 
-	if (header.RTR == CAN_RTR_REMOTE)
-	{
-		CpMsgSetRemote(pcan_msg);
-	}
-	else
-	{
-		CpMsgClrRemote(pcan_msg);
-	}
+		pcan_msg = &atsCan1MsgS[canpie_buffer_number];
 
-	CpMsgSetDlc(pcan_msg, header.DLC);
-
-	pcan_msg->tuMsgData.aubByte[0] = rx_data[0];
-	pcan_msg->tuMsgData.aubByte[1] = rx_data[1];
-	pcan_msg->tuMsgData.aubByte[2] = rx_data[2];
-	pcan_msg->tuMsgData.aubByte[3] = rx_data[3];
-	pcan_msg->tuMsgData.aubByte[4] = rx_data[4];
-	pcan_msg->tuMsgData.aubByte[5] = rx_data[5];
-	pcan_msg->tuMsgData.aubByte[6] = rx_data[6];
-	pcan_msg->tuMsgData.aubByte[7] = rx_data[7];
-
-	//pcan_msg->ulMsgUser = hcan->pRxMsg->FIFONumber;
-
-	//-----------------------------------------------------------------
-	// test for receive callback handler
-	//
-	if (aptsCan1FifoS[canpie_buffer_number] == 0L)
-	{
-		if (CPP_NULL != pfnRcvHandlerS)
+		if (header.IDE == CAN_ID_STD)
 		{
-			pfnRcvHandlerS(pcan_msg, canpie_buffer_number);
+			CpMsgSetStdId(pcan_msg, header.StdId);
 		}
+		else
+		{
+			CpMsgSetExtId(pcan_msg, header.ExtId);
+		}
+
+		if (header.RTR == CAN_RTR_REMOTE)
+		{
+			CpMsgSetRemote(pcan_msg);
+		}
+		else
+		{
+			CpMsgClrRemote(pcan_msg);
+		}
+
+		CpMsgSetDlc(pcan_msg, header.DLC);
+
+		pcan_msg->tuMsgData.aubByte[0] = rx_data[0];
+		pcan_msg->tuMsgData.aubByte[1] = rx_data[1];
+		pcan_msg->tuMsgData.aubByte[2] = rx_data[2];
+		pcan_msg->tuMsgData.aubByte[3] = rx_data[3];
+		pcan_msg->tuMsgData.aubByte[4] = rx_data[4];
+		pcan_msg->tuMsgData.aubByte[5] = rx_data[5];
+		pcan_msg->tuMsgData.aubByte[6] = rx_data[6];
+		pcan_msg->tuMsgData.aubByte[7] = rx_data[7];
+
+		//pcan_msg->ulMsgUser = hcan->pRxMsg->FIFONumber;
+
+		//-----------------------------------------------------------------
+		// test for receive callback handler
+		//
+		if (aptsCan1FifoS[canpie_buffer_number] == 0L)
+		{
+			if (CPP_NULL != pfnRcvHandlerS)
+			{
+				pfnRcvHandlerS(pcan_msg, canpie_buffer_number);
+			}
+		}
+		else
+		{
+			ptsFifoT = aptsCan1FifoS[canpie_buffer_number];
+			if (CpFifoIsFull(ptsFifoT) == 0)
+			{
+				ptsFifoMsgT = CpFifoDataInPtr(ptsFifoT);
+				memcpy(ptsFifoMsgT, pcan_msg, sizeof(CpCanMsg_ts));
+				CpFifoIncIn(ptsFifoT);
+			}
+		}
+
 	}
 	else
 	{
-		ptsFifoT = aptsCan1FifoS[canpie_buffer_number];
-		if (CpFifoIsFull(ptsFifoT) == 0)
-		{
-			ptsFifoMsgT = CpFifoDataInPtr(ptsFifoT);
-			memcpy(ptsFifoMsgT, pcan_msg, sizeof(CpCanMsg_ts));
-			CpFifoIncIn(ptsFifoT);
-		}
+#if CP_STATISTIC > 0
+		err1_counter++;
+#endif
 	}
 
 #if CP_STATISTIC > 0
